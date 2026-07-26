@@ -38,7 +38,9 @@ def application():
         ('label', True, 'label'),
         (None, True, 'ribbon'),
         (None, False, 'off'),
+        (None, None, 'label'),
         ('invalid', True, 'ribbon'),
+        ('invalid', None, 'label'),
     ],
 )
 def test_gallery_type_color_mode_normalizes_legacy_settings(
