@@ -247,10 +247,12 @@ class AppWindow(QMainWindow):
             if app_constants.UPDATE_VERSION != app_constants.vs:
                 pop = misc.BasePopup(self, blur=False)
                 ml = QVBoxLayout(pop.main_widget)
-                ml.addWidget(QLabel("\nGoodbye Happypanda!\n\n\nHello, this is the last release of 'old' Happypanda.\n"+
-                    "This means that I (personally) won't be adding any new features or fix bugs.\n\n"+
-                    "I have started a new project where I (with the help of others)\n try to create a better Happypanda from scratch.\n\n"+
-                    "Please follow me on twitter (@pewspew) to keep yourself updated!\n"))
+                ml.addWidget(QLabel(
+                    "\nHello Happypanda!\n\n"
+                    "This is an updated version of “old” Happypanda.\n"
+                    "It has many bugfixes and updated tools for those who'd "
+                    "like to use an offline version.\n"
+                ))
                 ml.addLayout(pop.buttons_layout)
                 pop.add_buttons("close")[0].clicked.connect(pop.close)
                 pop.adjustSize()
