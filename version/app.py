@@ -59,6 +59,18 @@ log_w = log.warning
 log_e = log.error
 log_c = log.critical
 
+
+def _record_current_version():
+    """Persist a version change and report whether its notice should be shown."""
+    if app_constants.UPDATE_VERSION == app_constants.vs:
+        return False
+
+    settings.set(app_constants.vs, 'Application', 'version')
+    settings.save()
+    app_constants.UPDATE_VERSION = app_constants.vs
+    return True
+
+
 class AppWindow(QMainWindow):
     "The application's main window"
 
@@ -241,10 +253,8 @@ class AppWindow(QMainWindow):
             #self.db_startup.startup()
             if app_constants.FIRST_TIME_LEVEL != app_constants.INTERNAL_LEVEL:
                 normalize_first_time()
-            if app_constants.UPDATE_VERSION != app_constants.vs:
-                settings.set(app_constants.vs, 'Application', 'version')
 
-            if app_constants.UPDATE_VERSION != app_constants.vs:
+            if _record_current_version():
                 pop = misc.BasePopup(self, blur=False)
                 ml = QVBoxLayout(pop.main_widget)
                 ml.addWidget(QLabel(
