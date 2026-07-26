@@ -23,7 +23,7 @@ Follow twiddly on Twitter to keep up to date with HPX:
 - Improved gallery scanning and page counts by filtering non-image files.
 - Added configurable gallery type colors with label, ribbon, and off modes;
   labels are the default.
-- Fixed sidebar, notification, and fractional-label display issues.
+- Added Date Modified sorting and automatic refresh for modified gallery sources (This will open a database update prompt if you're updating).
 
 ## Features
 
@@ -34,7 +34,9 @@ Follow twiddly on Twitter to keep up to date with HPX:
 - Gallery tagging: user-defined namespaces and tags
 - Gallery metadata fetching from the web (supports various sources)
 - Gallery downloading from the web (supports various sources)*
-- Folder monitoring that notifies you of filesystem changes
+- Date Modified display and sorting based on gallery source files
+- Folder monitoring that automatically refreshes chapters, thumbnails,
+  hashes, page counts, and modification dates when gallery content changes
 - Multiple ways of adding galleries to make it as convenient as possible
 - Recursive directory/archive scanning
 - Supports ZIP/CBZ, RAR/CBR, and directories with loose files
@@ -114,6 +116,13 @@ separate folder, then copy your existing `settings.ini`, `.happypanda`, `db`,
 and `downloads` data into the new folder. Keep the old installation until the
 new one has been verified. See [INSTALL.md](INSTALL.md) for the complete
 migration procedure.
+
+When opening an existing 0.26 library, HappyPanda prompts before upgrading its
+database to version 0.27 and creates a backup. Existing galleries initially
+have an unknown Date Modified value. After the upgrade, populate those values
+from the source files with **Settings → Advanced → Database → Maintenance →
+Recalculate Date Modified**. Missing or inaccessible gallery sources are
+skipped.
 
 ## Miscellaneous
 
