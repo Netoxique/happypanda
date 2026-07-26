@@ -502,6 +502,7 @@ class SideBarWidget(QFrame):
     """
     def __init__(self, parent):
         super().__init__(parent)
+        self._startup_visibility_applied = False
         self.setAcceptDrops(True)
         self.parent_widget = parent
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.MinimumExpanding)
@@ -627,6 +628,10 @@ class SideBarWidget(QFrame):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self._startup_visibility_applied:
+            return
+
+        self._startup_visibility_applied = True
         if not app_constants.SHOW_SIDEBAR_WIDGET:
             self.arrow_handle.click()
 
