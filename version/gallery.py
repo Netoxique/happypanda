@@ -19,7 +19,6 @@ import math
 import functools
 import random
 import datetime
-import pickle
 import enum
 import time
 import re as regex
@@ -52,6 +51,7 @@ import misc
 import gallerydialog
 import io_misc
 import utils
+import gallery_mime
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -304,7 +304,7 @@ class SortFilterModel(QSortFilterProxyModel):
 
     def canDropMimeData(self, data, action, row, coloumn, index):
         return False
-        if not data.hasFormat("list/gallery"):
+        if not data.hasFormat(gallery_mime.MIME_TYPE):
             return False
         return True
 
@@ -318,7 +318,20 @@ class SortFilterModel(QSortFilterProxyModel):
         if not index.isValid():
             return False
 
-        g_list = pickle.loads(data.data("list/gallery").data())
+        try:
+            gallery_ids = gallery_mime.decode_gallery_ids(
+                data.data(gallery_mime.MIME_TYPE)
+            )
+        except ValueError:
+            log_w("Ignoring invalid gallery drag data")
+            return False
+
+        g_list = gallery_mime.resolve_galleries(
+            gallery_ids, app_constants.GALLERY_DATA
+        )
+        if not g_list:
+            return False
+
         item_g = index.data(GalleryModel.GALLERY_ROLE)
         # ignore false positive
         for g in g_list:
@@ -337,16 +350,19 @@ class SortFilterModel(QSortFilterProxyModel):
         return True
 
     def mimeTypes(self):
-        return ['list/gallery'] + super().mimeTypes()
+        return [gallery_mime.MIME_TYPE] + super().mimeTypes()
 
     def mimeData(self, index_list):
         data = QMimeData()
-        g_list = []
+        gallery_ids = []
         for idx in index_list:
             g = idx.data(GalleryModel.GALLERY_ROLE)
-            if g != None:
-                g_list.append(g)
-        data.setData("list/gallery", QByteArray(pickle.dumps(g_list)))
+            if g is not None and g.id is not None:
+                gallery_ids.append(g.id)
+        data.setData(
+            gallery_mime.MIME_TYPE,
+            QByteArray(gallery_mime.encode_gallery_ids(gallery_ids))
+        )
         return data
 
     def flags(self, index):

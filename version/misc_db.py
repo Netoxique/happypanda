@@ -9,7 +9,6 @@
 #GNU General Public License for more details.
 #You should have received a copy of the GNU General Public License
 #along with Happypanda.  If not, see <http://www.gnu.org/licenses/>.
-import pickle
 import logging
 
 from PyQt5.QtWidgets import (QTreeWidget, QTreeWidgetItem, QWidget,
@@ -30,6 +29,7 @@ import app_constants
 import utils
 import misc
 import gallery
+import gallery_mime
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -416,7 +416,7 @@ class GalleryLists(QListWidget):
         self.setup_lists()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("list/gallery"):
+        if event.mimeData().hasFormat(gallery_mime.MIME_TYPE):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -429,9 +429,18 @@ class GalleryLists(QListWidget):
         event.accept()
 
     def dropEvent(self, event):
-        galleries = []
+        try:
+            gallery_ids = gallery_mime.decode_gallery_ids(
+                event.mimeData().data(gallery_mime.MIME_TYPE)
+            )
+        except ValueError:
+            log_w("Ignoring invalid gallery drag data")
+            event.ignore()
+            return
 
-        galleries = pickle.loads(event.mimeData().data("list/gallery").data())
+        galleries = gallery_mime.resolve_galleries(
+            gallery_ids, app_constants.GALLERY_DATA
+        )
 
         g_list_item = self.itemAt(event.pos())
         if galleries and g_list_item:
