@@ -1,3 +1,12 @@
+*Happypanda v1.2*
+- Added WebP image support.
+- Added a reproducible portable Windows x64 build with bundled UnRAR.
+- Improved startup and gallery loading performance.
+- Modernized E-Hentai and ExHentai metadata fetching.
+- Added support for current Eze JSON metadata.
+- Added configurable gallery type colors with label, ribbon, and off modes.
+- Fixed sidebar, notification, and gallery label display issues.
+
 *Happypanda v1.1*
 - Fixes
    - Fixed HP settings unusable without internet connection

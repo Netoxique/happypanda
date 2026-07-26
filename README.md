@@ -1,6 +1,7 @@
 # HappyPanda 1.2
 
-Updated repository of HappyPanda with modernized tools and improvements over the original implementation.
+Community-maintained release of HappyPanda with modernized tools and
+improvements over the original implementation.
 
 This is a cross-platform manga/doujinshi manager with namespace and tag
 support.
@@ -13,10 +14,15 @@ Follow twiddly on Twitter to keep up to date with HPX:
 ## Changes over the original
 
 - Added WebP image support.
-- Added a portable Windows x64 build based on CPython 3.11 and cx_Freeze.
+- Added a reproducible portable Windows x64 build based on CPython 3.11 and
+  cx_Freeze, with bundled UnRAR support.
 - Improved startup and gallery loading performance.
-- Modernized E-Hentai and ExHentai metadata fetching with batching and safer error handling.
-- Added configurable thumbnail ribbons, type colors, and labels.
+- Modernized E-Hentai and ExHentai metadata fetching with batching, source
+  fallback, and safer error handling.
+- Added compatibility with current Eze JSON metadata.
+- Improved gallery scanning and page counts by filtering non-image files.
+- Added configurable gallery type colors with label, ribbon, and off modes;
+  labels are the default.
 - Fixed sidebar, notification, and fractional-label display issues.
 
 ## Features
@@ -39,6 +45,9 @@ Follow twiddly on Twitter to keep up to date with HPX:
 
 ## Screenshots
 
+These screenshots show the original interface; some 1.2 visual options may
+differ.
+
 ![HappyPanda screenshot 1](https://github.com/Pewpews/happypanda/raw/master/misc/screenshot1.png)
 
 ![HappyPanda screenshot 2](https://github.com/Pewpews/happypanda/raw/master/misc/screenshot2.png)
@@ -49,16 +58,21 @@ Follow twiddly on Twitter to keep up to date with HPX:
 
 ### Windows
 
-1. Download the archive from the
-   [releases page](https://github.com/Pewpews/happypanda/releases).
+The portable release supports 64-bit Windows 10 and Windows 11.
+
+1. Download the latest Windows x64 archive from this fork's
+   [releases page](https://github.com/Netoxique/happypanda/releases).
 2. Extract the archive to its own folder.
 3. Find `Happypanda.exe` and double-click it.
 
 ### macOS and Linux
 
-Install from PyPI or see [INSTALL.md](INSTALL.md).
+Run this fork from source by following [INSTALL.md](INSTALL.md).
 
-### PyPI
+### Legacy PyPI package
+
+The package published as `happypanda` on PyPI is the original release and does
+not contain the changes in this fork. To install that legacy version:
 
 ```shell
 pip install happypanda
@@ -66,7 +80,7 @@ pip install happypanda
 
 Thanks to [@Evolution0](https://github.com/Evolution0).
 
-Then run:
+Run the legacy package with:
 
 ```shell
 happypanda --home
@@ -95,14 +109,11 @@ C:\Users\YourName\AppData\Local\Pewpew\Happypanda
 
 ## Updating
 
-Overwrite your previous installation. More information is available in the
-[wiki](https://github.com/Pewpews/happypanda/wiki).
-
-### PyPI
-
-```shell
-pip install --upgrade happypanda
-```
+Do not overwrite your existing installation. Extract the new release into a
+separate folder, then copy your existing `settings.ini`, `.happypanda`, `db`,
+and `downloads` data into the new folder. Keep the old installation until the
+new one has been verified. See [INSTALL.md](INSTALL.md) for the complete
+migration procedure.
 
 ## Miscellaneous
 
@@ -114,26 +125,25 @@ To import galleries from the Pururin database torrent, see the
 
 ## Dependencies
 
-- Qt5 >= 5.4 (install this first)
-- PyQt5 (pip)
-- requests (pip)
-- beautifulsoup4 (pip)
-- watchdog (pip)
-- scandir (pip)
-- rarfile (pip)
-- robobrowser (pip)
-- Send2Trash (pip)
-- Pillow (pip) or PIL
-- python-dateutil (pip)
-- QtAwesome (pip)
-- appdirs (pip)
+Source dependencies are maintained in [requirements.txt](requirements.txt):
+
+```shell
+python -m pip install -r requirements.txt
+```
+
+The portable Windows build uses the fully pinned and hash-locked dependencies
+in `requirements-win64.lock`; users of that build do not need to install
+Python or the dependencies separately.
 
 ## Building Windows x64
 
-The supported Windows release is a portable 64-bit folder built with CPython
-3.11.9 and cx_Freeze. See [INSTALL.md](INSTALL.md) for prerequisites, the
-one-command build, and the saved-data migration procedure.
+The supported Windows release is a portable 64-bit folder for Windows 10 and
+Windows 11, built with CPython 3.11.9 and cx_Freeze. It includes a verified
+copy of UnRAR for RAR/CBR support. See [INSTALL.md](INSTALL.md) for
+prerequisites, the one-command build, and the saved-data migration procedure.
 
 ## Contributing
 
-Please refer to [HappyPanda X](https://github.com/happypandax/server) instead.
+Issues and pull requests for this maintenance fork are welcome. For the
+actively developed successor project, see
+[HappyPanda X](https://github.com/happypandax/server).
