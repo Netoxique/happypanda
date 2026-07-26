@@ -661,7 +661,7 @@ class Watchers:
             gallery_observer = Observer()
 
             try:
-                gallery_observer.schedule(self.gallery_handler, path, True)
+                gallery_observer.schedule(self.gallery_handler, path, recursive=True)
                 gallery_observer.start()
                 self.watchers.append(gallery_observer)
             except:

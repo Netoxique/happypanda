@@ -1,4 +1,4 @@
-import queue, os, random, logging, time, scandir
+import queue, os, random, logging, time
 from datetime import datetime
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QDesktopWidget, QGroupBox,
@@ -251,7 +251,7 @@ class GalleryDialog(QWidget):
 
     def resizeEvent(self, event):
         self.tags_edit.setFixedHeight(event.size().height()//8)
-        self.descr_edit.setFixedHeight(event.size().height()//12.5)
+        self.descr_edit.setFixedHeight(int(event.size().height() // 12.5))
         return super().resizeEvent(event)
 
     def _find_combobox_match(self, combobox, key, default):

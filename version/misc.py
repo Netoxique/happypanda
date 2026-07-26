@@ -19,7 +19,6 @@ import logging
 import math
 import random
 import functools
-import scandir
 from datetime import datetime
 
 from PyQt5.QtCore import (Qt, QDate, QPoint, pyqtSignal, QThread,
@@ -870,7 +869,8 @@ class Spinner(TransparentWidget):
 
     def _update_layout(self):
         self.text_layout = text_layout(self.text, self.width() - self._text_margin, self.font(), self.fontMetrics())
-        self.setFixedHeight(self._min_size + self.text_layout.boundingRect().height())
+        height = self._min_size + self.text_layout.boundingRect().height()
+        self.setFixedHeight(math.ceil(height))
 
     def set_size(self, w):
         self.setFixedWidth(w)
@@ -917,7 +917,11 @@ class Spinner(TransparentWidget):
             painter.save()
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(QColor(88,88,88,180)))
-            painter.drawRoundedRect(QRect(0,0, self.width(), self.height() - txt_rect.height()), 5, 5)
+            painter.drawRoundedRect(
+                QRectF(0, 0, self.width(), self.height() - txt_rect.height()),
+                5,
+                5,
+            )
             painter.restore()
 
             pen = QPen(QColor('#F2F2F2'))
@@ -951,7 +955,7 @@ class Spinner(TransparentWidget):
             self.current_state = self.about_to_show
             self.state_timer.stop()
             self.activated.emit()
-            self._timer.start(1000 / max(1, self.fps))
+            self._timer.start(max(1, round(1000 / max(1, self.fps))))
         super().showEvent(event)
 
     def hideEvent(self, event):
@@ -1967,7 +1971,7 @@ class FileIcon:
                         file = os.path.join(folder, name)
                         break
             else:
-                for p in scandir.scandir(gallery.chapters[0].path):
+                for p in os.scandir(gallery.chapters[0].path):
                     if p.name.lower().endswith(tuple(IMG_FILES)):
                         file = p.path
                         break
@@ -2283,7 +2287,7 @@ class ChapterAddWidget(QWidget):
                 chap.title = utils.title_parser(os.path.split(p)[1])['title']
                 chap.path = p
                 if os.path.isdir(p):
-                    chap.pages = len(list(scandir.scandir(p)))
+                    chap.pages = len(list(os.scandir(p)))
                 elif p.endswith(utils.ARCHIVE_FILES):
                     chap.in_archive = 1
                     arch = utils.ArchiveFile(p)

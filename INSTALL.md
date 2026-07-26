@@ -54,6 +54,33 @@ Download from here https://www.python.org/downloads/
 
 Note: Try renaming the 'main.py' file to 'main.pyw' and then just doubleclick on it to try running without console (not guaranteed to work)
 
+## Building the portable Windows x64 release
+
+The reproducible release target supports 64-bit Windows 10 and Windows 11.
+It uses CPython 3.11.9 x64 and cx_Freeze 8.6.4.
+
+1. Install the 64-bit CPython 3.11.9 release from python.org.
+2. Open PowerShell in the repository root.
+3. Run `.\scripts\build-win64.ps1`.
+
+If Python 3.11.9 is not registered with the Windows Python launcher, pass its
+full path:
+
+`.\scripts\build-win64.ps1 -PythonExe C:\path\to\python.exe`
+
+The script creates an isolated `.venv-build`, installs the hash-locked
+dependencies, downloads and verifies RARLAB UnRAR 7.23 x64, and writes the
+portable application to `dist\HappyPanda`. The output includes build metadata
+and SHA-256 checksums. Copy the entire output directory; the executable is not
+a single-file application.
+
+The build never includes `settings.ini`, `.happypanda`, `db`, `downloads`,
+`temp`, or logs. To test existing data, copy those items from an old
+installation into a separate copy of `dist\HappyPanda`. Do not test by
+overwriting the original installation. HappyPanda resolves portable data
+relative to the frozen executable even when a shortcut has a different
+working directory.
+
 # Mac OS X
 (Note: PyQt5 MUST be installed via Homebrew and NOT via Pip)
 

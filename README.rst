@@ -114,6 +114,13 @@ Dependencies
 -  QtAwesome (pip)
 -  appdirs (pip)
 
+Building Windows x64
+====================
+
+The supported Windows release is a portable 64-bit folder built with
+CPython 3.11.9 and cx_Freeze. See ``INSTALL.md`` for prerequisites, the
+one-command build, and the saved-data migration procedure.
+
 Contributing
 ============
 

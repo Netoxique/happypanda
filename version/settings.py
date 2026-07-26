@@ -27,9 +27,6 @@ else:
     settings_path = 'settings.ini'
     phappypanda_path = '.happypanda'
 
-if not os.path.isfile(settings_path):
-    open(settings_path, 'x')
-
 class Config(configparser.ConfigParser):
     def __init__(self):
         super().__init__()

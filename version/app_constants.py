@@ -48,7 +48,12 @@ else:
 	static_dir = os.path.join(os.getcwd(), "res")
 	temp_dir = os.path.join('temp')
 # path to unrar tool binary
-unrar_tool_path = get('', 'Application', 'unrar tool path')
+bundled_unrar_tool_path = os.path.join(bin_dir, 'unrar.exe')
+unrar_tool_path = get(
+	bundled_unrar_tool_path if os.path.isfile(bundled_unrar_tool_path) else '',
+	'Application',
+	'unrar tool path'
+)
 
 # type of download needed by download manager for each site parser
 # NOTE define here if any new type will be supported in the future.
@@ -157,31 +162,31 @@ def load_icons():
     global INBOX_ICON
     global SPINNER_ICON
 
-    G_LISTS_ICON_WH = qta.icon("fa.bars", color="white")
-    G_LISTS_ICON = qta.icon("fa.bars", color="black")
-    LIST_ICON = qta.icon("fa.bars", color="white")
-    ARTISTS_ICON = qta.icon("fa.users", color="white")
-    ARTIST_ICON = qta.icon("fa.user", color="black")
-    NSTAGS_ICON = qta.icon("fa.sitemap", color="white")
-    PLUS_ICON = qta.icon("fa.plus", color="white")
-    ARROW_RIGHT_ICON = qta.icon("fa.angle-double-right", color="white")
-    ARROW_LEFT_ICON = qta.icon("fa.angle-double-left", color="white")
-    GRID_ICON = qta.icon("fa.th", color="white")
-    GRIDL_ICON = qta.icon("fa.th-large", color="white")
-    SEARCH_ICON = qta.icon("fa.search", color="white")
-    CROSS_ICON = qta.icon("fa.times", color="black")
-    CROSS_ICON_WH = qta.icon("fa.times", color="white")
-    MANAGER_ICON = qta.icon("fa.tasks", color="white")
-    DOWNLOAD_ICON = qta.icon("fa.arrow-circle-o-down", color="white")
-    RANDOM_ICON = qta.icon("fa.random", color="white")
-    DUPLICATE_ICON = qta.icon("fa.files-o", color="white")
-    SORT_ICON_DESC = qta.icon("fa.sort-amount-desc", color="white")
-    SORT_ICON_ASC = qta.icon("fa.sort-amount-asc", color="white")
-    REFRESH_ICON = qta.icon("fa.refresh", color="black")
-    STAR_ICON = qta.icon("fa.star", color="white")
-    CIRCLE_ICON = qta.icon("fa.circle", color="white")
-    INBOX_ICON = qta.icon("fa.inbox", color="white")
-    SPINNER_ICON = qta.icon("fa.spinner", color="white")
+    G_LISTS_ICON_WH = qta.icon("fa5s.bars", color="white")
+    G_LISTS_ICON = qta.icon("fa5s.bars", color="black")
+    LIST_ICON = qta.icon("fa5s.bars", color="white")
+    ARTISTS_ICON = qta.icon("fa5s.users", color="white")
+    ARTIST_ICON = qta.icon("fa5s.user", color="black")
+    NSTAGS_ICON = qta.icon("fa5s.sitemap", color="white")
+    PLUS_ICON = qta.icon("fa5s.plus", color="white")
+    ARROW_RIGHT_ICON = qta.icon("fa5s.angle-double-right", color="white")
+    ARROW_LEFT_ICON = qta.icon("fa5s.angle-double-left", color="white")
+    GRID_ICON = qta.icon("fa5s.th", color="white")
+    GRIDL_ICON = qta.icon("fa5s.th-large", color="white")
+    SEARCH_ICON = qta.icon("fa5s.search", color="white")
+    CROSS_ICON = qta.icon("fa5s.times", color="black")
+    CROSS_ICON_WH = qta.icon("fa5s.times", color="white")
+    MANAGER_ICON = qta.icon("fa5s.tasks", color="white")
+    DOWNLOAD_ICON = qta.icon("fa5s.arrow-alt-circle-down", color="white")
+    RANDOM_ICON = qta.icon("fa5s.random", color="white")
+    DUPLICATE_ICON = qta.icon("fa5s.copy", color="white")
+    SORT_ICON_DESC = qta.icon("fa5s.sort-amount-down", color="white")
+    SORT_ICON_ASC = qta.icon("fa5s.sort-amount-up", color="white")
+    REFRESH_ICON = qta.icon("fa5s.sync-alt", color="black")
+    STAR_ICON = qta.icon("fa5s.star", color="white")
+    CIRCLE_ICON = qta.icon("fa5s.circle", color="white")
+    INBOX_ICON = qta.icon("fa5s.inbox", color="white")
+    SPINNER_ICON = qta.icon("fa5s.spinner", color="white")
 
 # image paths
 GALLERY_DEF_ICO_PATH = os.path.join(static_dir, "gallery_def_ico.ico")

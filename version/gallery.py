@@ -966,7 +966,7 @@ class GridDelegate(QStyledItemDelegate):
                     star_width = star_rating.sizeHint().width()
                     star_start_x += ((x+w-star_start_x)-(star_width))/2
                     star_rating.paint(painter,
-                        QRect(star_start_x, type_rect.y(), star_width, type_rect.height()))
+                        QRect(round(star_start_x), type_rect.y(), star_width, type_rect.height()))
 
             if gallery.state == app_constants.GalleryState.New:
                 painter.save()

@@ -46,7 +46,8 @@ def test_init_db(path_isfile_retval, check_dbv_retval, path_is_dbc_path):
                 mock.call.connect(path, check_same_thread=False),
                 mock.call.connect().cursor(),
                 mock.call.connect().cursor().execute(
-                    'CREATE TABLE IF NOT EXISTS version(version REAL)'),
+                    '\n        CREATE TABLE IF NOT EXISTS '
+                    'version(version REAL)\n        '),
                 mock.call.connect().cursor().execute(
                     'INSERT INTO version(version) VALUES(?)',
                     (m_dbc.CURRENT_DB_VERSION,)
