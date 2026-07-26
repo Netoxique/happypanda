@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QListWidget, QWidget,
                              QLabel, QTabWidget, QLineEdit, QGroupBox, QFormLayout,
                              QCheckBox, QRadioButton, QSpinBox, QSizePolicy,
                              QScrollArea, QFontDialog, QMessageBox, QComboBox,
-                             QFileDialog, QSlider)
+                             QFileDialog, QSlider, QButtonGroup)
 from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QPalette, QPixmapCache
 
@@ -242,7 +242,12 @@ class SettingsDialog(QWidget):
         self.grid_title_color.setText(app_constants.GRID_VIEW_TITLE_COLOR)
         self.grid_artist_color.setText(app_constants.GRID_VIEW_ARTIST_COLOR)
 
-        self.colors_ribbon_group.setChecked(app_constants.DISPLAY_GALLERY_RIBBON)
+        type_color_buttons = {
+            'off': self.gallery_type_color_off,
+            'ribbon': self.gallery_type_color_ribbon,
+            'label': self.gallery_type_color_label,
+        }
+        type_color_buttons[app_constants.GALLERY_TYPE_COLOR_MODE].setChecked(True)
         self.ribbon_manga_color.setText(app_constants.GRID_VIEW_T_MANGA_COLOR)
         self.ribbon_doujin_color.setText(app_constants.GRID_VIEW_T_DOUJIN_COLOR)
         self.ribbon_artist_cg_color.setText(app_constants.GRID_VIEW_T_ARTIST_CG_COLOR)
@@ -462,7 +467,15 @@ class SettingsDialog(QWidget):
         set(app_constants.GRID_SPACING, 'Visual', 'grid spacing')
 
         # Visual / Grid View / Colors
-        app_constants.DISPLAY_GALLERY_RIBBON = self.colors_ribbon_group.isChecked()
+        if self.gallery_type_color_label.isChecked():
+            app_constants.GALLERY_TYPE_COLOR_MODE = 'label'
+        elif self.gallery_type_color_ribbon.isChecked():
+            app_constants.GALLERY_TYPE_COLOR_MODE = 'ribbon'
+        else:
+            app_constants.GALLERY_TYPE_COLOR_MODE = 'off'
+        set(app_constants.GALLERY_TYPE_COLOR_MODE, 'Visual', 'gallery type color mode')
+        app_constants.DISPLAY_GALLERY_RIBBON = (
+            app_constants.GALLERY_TYPE_COLOR_MODE == 'ribbon')
         set(app_constants.DISPLAY_GALLERY_RIBBON, 'Visual', 'display gallery ribbon')
         if self.color_checker(self.grid_title_color.text()):
             app_constants.GRID_VIEW_TITLE_COLOR = self.grid_title_color.text()
@@ -1044,10 +1057,25 @@ class SettingsDialog(QWidget):
             hex_color=app_constants.GRID_VIEW_ARTIST_COLOR)
         grid_colors_l.addRow('Artist color:', hbox_layout)
 
-        # grid view / colors / ribbon
-        self.colors_ribbon_group, colors_ribbon_l = groupbox('Ribbon', QFormLayout, grid_colors_group)
-        self.colors_ribbon_group.setCheckable(True)
-        grid_colors_l.addRow(self.colors_ribbon_group)
+        # grid view / gallery type colors
+        self.colors_type_group, colors_ribbon_l = groupbox(
+            'Gallery type colors', QFormLayout, grid_colors_group)
+        grid_colors_l.addRow(self.colors_type_group)
+
+        type_color_mode_widget = QWidget(self.colors_type_group)
+        type_color_mode_layout = QHBoxLayout(type_color_mode_widget)
+        type_color_mode_layout.setContentsMargins(0, 0, 0, 0)
+        self.gallery_type_color_group = QButtonGroup(self.colors_type_group)
+        self.gallery_type_color_off = QRadioButton('Off', type_color_mode_widget)
+        self.gallery_type_color_ribbon = QRadioButton('Ribbon', type_color_mode_widget)
+        self.gallery_type_color_label = QRadioButton('Label', type_color_mode_widget)
+        for button in (self.gallery_type_color_off,
+                       self.gallery_type_color_ribbon,
+                       self.gallery_type_color_label):
+            self.gallery_type_color_group.addButton(button)
+            type_color_mode_layout.addWidget(button)
+        type_color_mode_layout.addStretch()
+        colors_ribbon_l.addRow('Display:', type_color_mode_widget)
 
         self.ribbon_manga_color, hbox_layout = self._get_color_line_edit_and_hbox_layout(
              app_constants.GRID_VIEW_T_MANGA_COLOR)

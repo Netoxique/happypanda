@@ -770,6 +770,10 @@ class GridDelegate(QStyledItemDelegate):
             title_color = app_constants.GRID_VIEW_TITLE_COLOR
             artist_color = app_constants.GRID_VIEW_ARTIST_COLOR
             label_color = app_constants.GRID_VIEW_LABEL_COLOR
+            color_label_by_type = (
+                app_constants.GALLERY_TYPE_COLOR_MODE == 'label')
+            if color_label_by_type:
+                label_color = self._ribbon_color(gallery.type)
             # Enable this to see the defining box
             #painter.drawRect(option.rect)
             # define font size
@@ -795,45 +799,54 @@ class GridDelegate(QStyledItemDelegate):
             else:
                 artist_size = "font-size:{}px;".format(self.font_size)
 
-            text_area = QTextDocument()
-            text_area.setDefaultFont(option.font)
-            text_area.setHtml("""
-            <head>
-            <style>
-            #area
-            {{
-                display:flex;
-                width:{6}px;
-                height:{7}px
-            }}
-            #title {{
-            position:absolute;
-            color: {4};
-            font-weight:bold;
-            {0}
-            }}
-            #artist {{
-            position:absolute;
-            color: {5};
-            top:20px;
-            right:0;
-            {1}
-            }}
-            </style>
-            </head>
-            <body>
-            <div id="area">
-            <center>
-            <div id="title">{2}
-            </div>
-            <div id="artist">{3}
-            </div>
-            </div>
-            </center>
-            </body>
-            """.format(title_size, artist_size, title, artist, title_color, artist_color,
-              130 + app_constants.SIZE_FACTOR, 1 + app_constants.SIZE_FACTOR))
-            text_area.setTextWidth(w)
+            def make_text_area(title_text_color, artist_text_color):
+                area = QTextDocument()
+                area.setDefaultFont(option.font)
+                area.setHtml("""
+                <head>
+                <style>
+                #area
+                {{
+                    display:flex;
+                    width:{6}px;
+                    height:{7}px
+                }}
+                #title {{
+                position:absolute;
+                color: {4};
+                font-weight:bold;
+                {0}
+                }}
+                #artist {{
+                position:absolute;
+                color: {5};
+                top:20px;
+                right:0;
+                {1}
+                }}
+                </style>
+                </head>
+                <body>
+                <div id="area">
+                <center>
+                <div id="title">{2}
+                </div>
+                <div id="artist">{3}
+                </div>
+                </div>
+                </center>
+                </body>
+                """.format(title_size, artist_size, title, artist,
+                           title_text_color, artist_text_color,
+                           130 + app_constants.SIZE_FACTOR,
+                           1 + app_constants.SIZE_FACTOR))
+                area.setTextWidth(w)
+                return area
+
+            text_area = make_text_area(title_color, artist_color)
+            shadow_text_area = (
+                make_text_area('#000000', '#000000')
+                if color_label_by_type else None)
 
             #chapter_area = QTextDocument()
             #chapter_area.setDefaultFont(option.font)
@@ -903,7 +916,7 @@ class GridDelegate(QStyledItemDelegate):
             # draw ribbon type
             painter.save()
             painter.setPen(Qt.NoPen)
-            if app_constants.DISPLAY_GALLERY_RIBBON:
+            if app_constants.GALLERY_TYPE_COLOR_MODE == 'ribbon':
                 type_ribbon_w = type_ribbon_l = w * 0.11
                 rib_top_1 = QPointF(x + w - type_ribbon_l - type_ribbon_w, y)
                 rib_top_2 = QPointF(x + w - type_ribbon_l, y)
@@ -1024,9 +1037,22 @@ class GridDelegate(QStyledItemDelegate):
                     lbl_rect = draw_text_label(app_constants.GRIDBOX_LBL_H)
 
                 clipping = QRectF(x, y + app_constants.THUMB_H_SIZE, w, app_constants.GRIDBOX_LBL_H - 10)
+                if color_label_by_type:
+                    painter.setPen(QColor(0, 0, 0, 160))
+                    title_layout.draw(
+                        painter,
+                        QPointF(x + 1, y + app_constants.THUMB_H_SIZE + 1),
+                        clip=clipping)
                 painter.setPen(QColor(title_color))
                 title_layout.draw(painter, QPointF(x, y + app_constants.THUMB_H_SIZE),
                       clip=clipping)
+                if color_label_by_type:
+                    painter.setPen(QColor(0, 0, 0, 160))
+                    artist_layout.draw(
+                        painter,
+                        QPointF(x + 1,
+                                y + app_constants.THUMB_H_SIZE + t_h + 1),
+                        clip=clipping)
                 painter.setPen(QColor(artist_color))
                 artist_layout.draw(painter, QPointF(x, y + app_constants.THUMB_H_SIZE + t_h),
                        clip=clipping)
@@ -1046,19 +1072,40 @@ class GridDelegate(QStyledItemDelegate):
                 painter.translate(x, y + app_constants.THUMB_H_SIZE)
                 if app_constants.GALLERY_FONT_ELIDE:
                     painter.setFont(self.title_font)
+                    if color_label_by_type:
+                        painter.setPen(QColor(0, 0, 0, 160))
+                        painter.drawText(
+                            title_rect.translated(1, 1),
+                            self.title_font_m.elidedText(
+                                title, Qt.ElideRight, w - 10),
+                            alignment)
                     painter.setPen(QColor(title_color))
                     painter.drawText(title_rect,
                              self.title_font_m.elidedText(title, Qt.ElideRight, w - 10),
                              alignment)
                 
-                    painter.setPen(QColor(artist_color))
                     painter.setFont(self.artist_font)
                     alignment.setWrapMode(QTextOption.NoWrap)
+                    if color_label_by_type:
+                        painter.setPen(QColor(0, 0, 0, 160))
+                        painter.drawText(
+                            artist_rect.translated(1, 1),
+                            self.title_font_m.elidedText(
+                                artist, Qt.ElideRight, w - 10),
+                            alignment)
+                    painter.setPen(QColor(artist_color))
                     painter.drawText(artist_rect,
                                 self.title_font_m.elidedText(artist, Qt.ElideRight, w - 10),
                                 alignment)
                 else:
                     text_area.setDefaultFont(QFont(self.font_name))
+                    if color_label_by_type:
+                        shadow_text_area.setDefaultFont(QFont(self.font_name))
+                        painter.save()
+                        painter.translate(1, 1)
+                        painter.setOpacity(0.63)
+                        shadow_text_area.drawContents(painter)
+                        painter.restore()
                     text_area.drawContents(painter)
                 ##painter.resetTransform()
                 painter.restore()
@@ -1120,6 +1167,8 @@ class GridDelegate(QStyledItemDelegate):
     def _ribbon_color(self, gallery_type):
         if gallery_type:
             gallery_type = gallery_type.lower()
+        else:
+            gallery_type = ''
         if gallery_type == "manga":
             return app_constants.GRID_VIEW_T_MANGA_COLOR
         elif gallery_type == "doujinshi":

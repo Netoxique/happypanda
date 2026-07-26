@@ -273,6 +273,19 @@ HIGH_QUALITY_THUMBS = get(False, 'Visual', 'high quality thumbs', bool)
 DISPLAY_RATING = get(True, 'Visual', 'display gallery rating', bool)
 DISPLAY_GALLERY_TYPE = get(False, 'Visual', 'display gallery type', bool) if not sys.platform.startswith('darwin') else False
 DISPLAY_GALLERY_RIBBON = get(True, 'Visual', 'display gallery ribbon', bool)
+GALLERY_TYPE_COLOR_MODES = ('off', 'ribbon', 'label')
+
+def normalize_gallery_type_color_mode(value, display_gallery_ribbon):
+	if isinstance(value, str):
+		value = value.lower()
+	if value in GALLERY_TYPE_COLOR_MODES:
+		return value
+	return 'ribbon' if display_gallery_ribbon else 'off'
+
+GALLERY_TYPE_COLOR_MODE = normalize_gallery_type_color_mode(
+	get(None, 'Visual', 'gallery type color mode', str),
+	DISPLAY_GALLERY_RIBBON)
+DISPLAY_GALLERY_RIBBON = GALLERY_TYPE_COLOR_MODE == 'ribbon'
 GALLERY_FONT = (get('Segoe UI', 'Visual', 'gallery font family', str),
 				get(11, 'Visual', 'gallery font size', int))
 GALLERY_FONT_ELIDE = get(True, 'Visual', 'gallery font elide', bool)
