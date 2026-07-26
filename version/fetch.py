@@ -342,34 +342,35 @@ class Fetch(QObject):
         log_i('Finished applying metadata')
 
     def _auto_metadata_process(self, galleries, hen, valid_url, **kwargs):
-        hen.LAST_USED = time.time()
         self.AUTO_METADATA_PROGRESS.emit("Checking gallery urls...")
 
-        fetched_galleries = []
         checked_pre_url_galleries = []
         multiple_hit_galleries = []
         for x, gallery in enumerate(galleries, 1):
             custom_args = {} # send to hen class
             log_i("Checking gallery url")
 
-            # coming from GalleryDialog
-            if hasattr(gallery, "_g_dialog_url"):
-                if gallery._g_dialog_url:
-                    gallery.temp_url = gallery._g_dialog_url
-                    checked_pre_url_galleries.append(gallery)
-                    # to process even if this gallery is last and fails
-                    if x == len(galleries):
-                        self.fetch_metadata(hen=hen)
-                    continue
+            candidate_url = getattr(gallery, "_g_dialog_url", None)
+            if not candidate_url:
+                # temp_url is populated as soon as discovery succeeds. Reuse it
+                # if an EH-family fallback needs to retry the metadata request.
+                candidate_url = getattr(gallery, "temp_url", None)
+            if not candidate_url and gallery.link and \
+                    app_constants.USE_GALLERY_LINK:
+                candidate_url = gallery.link
 
-            if gallery.link and app_constants.USE_GALLERY_LINK:
-                log_i("Using existing gallery url")
-                check = self._website_checker(gallery.link)
-                if check == valid_url:
-                    # convert g.e-h to e-h
-                    gallery.link = pewnet.HenManager.gtoEh(gallery.link)
-                    gallery.temp_url = gallery.link
+            if candidate_url:
+                url_type = self._website_checker(candidate_url)
+                if self._source_accepts_url(url_type, valid_url):
+                    log_i("Using existing gallery url")
+                    link_was_candidate = gallery.link == candidate_url
+                    candidate_url = pewnet.HenManager.gtoEh(candidate_url)
+                    if link_was_candidate:
+                        gallery.link = candidate_url
+                    gallery.temp_url = candidate_url
                     checked_pre_url_galleries.append(gallery)
+                    # Flush any discovered URLs accumulated before this final
+                    # direct URL. Direct URLs are queued together below.
                     if x == len(galleries):
                         self.fetch_metadata(hen=hen)
                     continue
@@ -500,6 +501,15 @@ class Fetch(QObject):
         else:
             log_e('Invalid URL')
             return None
+
+    @staticmethod
+    def _source_accepts_url(url_type, source_type):
+        """Return whether a metadata source can consume the supplied URL."""
+        if source_type in ('ehen', 'exhen'):
+            # Both gallery sites use https://api.e-hentai.org/api.php for
+            # metadata. Credentials still differ between source instances.
+            return url_type in ('ehen', 'exhen')
+        return url_type == source_type
 
     @staticmethod
     def _ehen_sources(default_url, cookies):

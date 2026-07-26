@@ -954,29 +954,75 @@ class ExHenManager(HenManager):
 
 class CommenHen:
     "Contains common methods"
-    LOCK = threading.Lock()
-    TIME_RAND = app_constants.GLOBAL_EHEN_TIME
-    QUEUE = []
     COOKIES = {}
-    LAST_USED = time.time()
     HEADERS = {'user-agent':"Mozilla/5.0 (Windows NT 6.3; rv:36.0) Gecko/20100101 Firefox/36.0"}
     _QUEUE_LIMIT = 25
     _browser = RoboBrowser(user_agent=HEADERS['user-agent'], parser='html.parser')
+    _SEARCH_LOCK = threading.Lock()
+    _API_LOCK = threading.Lock()
+    _SEARCH_LAST_REQUEST = None
+    _API_BURST_COUNT = 0
+    _API_LAST_REQUEST = None
+    _SEARCH_MIN_DELAY = 3
+    _API_BURST_LIMIT = 4
+    _API_COOLDOWN = 5
 
-    def begin_lock(self):
-        log_d('locked')
-        self.LOCK.acquire()
-        t1 = time.time()
-        while int(time.time() - self.LAST_USED) < self.TIME_RAND:
-            t = random.randint(3, self.TIME_RAND)
-            time.sleep(t)
-        t2 = time.time() - t1
-        log_d("Slept for {}".format(t2))
+    def __init__(self):
+        # Metadata queues belong to a source instance. A class-level queue can
+        # leak failed requests into a fallback source or a later fetch.
+        self.QUEUE = []
 
-    def end_lock(self):
-        log_d('unlocked')
-        self.LAST_USED = time.time()
-        self.LOCK.release()
+    @classmethod
+    def _wait(cls, delay):
+        if delay > 0:
+            log_d("Rate limiter sleeping for {:.3f} seconds".format(delay))
+            time.sleep(delay)
+
+    @classmethod
+    def wait_for_search(cls):
+        """Apply the documented minimum interval between gallery searches."""
+        try:
+            configured_delay = max(0, int(app_constants.GLOBAL_EHEN_TIME))
+        except (TypeError, ValueError):
+            configured_delay = cls._SEARCH_MIN_DELAY
+        delay = max(cls._SEARCH_MIN_DELAY, configured_delay)
+
+        # EH and ExH searches share this state so switching fallback sources
+        # cannot accidentally bypass the search interval.
+        with CommenHen._SEARCH_LOCK:
+            now = time.monotonic()
+            if CommenHen._SEARCH_LAST_REQUEST is not None:
+                remaining = delay - (
+                    now - CommenHen._SEARCH_LAST_REQUEST)
+                cls._wait(remaining)
+            CommenHen._SEARCH_LAST_REQUEST = time.monotonic()
+
+    @classmethod
+    def wait_for_api(cls):
+        """Allow four metadata API requests, then pause for five seconds."""
+        with CommenHen._API_LOCK:
+            now = time.monotonic()
+            if CommenHen._API_LAST_REQUEST is not None and \
+                    now - CommenHen._API_LAST_REQUEST >= cls._API_COOLDOWN:
+                CommenHen._API_BURST_COUNT = 0
+
+            if CommenHen._API_BURST_COUNT >= cls._API_BURST_LIMIT:
+                remaining = cls._API_COOLDOWN - (
+                    now - CommenHen._API_LAST_REQUEST)
+                cls._wait(remaining)
+                CommenHen._API_BURST_COUNT = 0
+
+            CommenHen._API_BURST_COUNT += 1
+            CommenHen._API_LAST_REQUEST = time.monotonic()
+
+    @classmethod
+    def _reset_rate_limits(cls):
+        """Reset limiter state. Intended for tests and process reinitialization."""
+        with CommenHen._SEARCH_LOCK:
+            CommenHen._SEARCH_LAST_REQUEST = None
+        with CommenHen._API_LOCK:
+            CommenHen._API_BURST_COUNT = 0
+            CommenHen._API_LAST_REQUEST = None
 
     def add_to_queue(self, url='', proc=False, parse=True):
         """Add url the the queue, when the queue has reached _QUEUE_LIMIT entries will auto process
@@ -1133,6 +1179,7 @@ class EHen(CommenHen):
     API_URL = "https://api.e-hentai.org/api.php"
 
     def __init__(self, cookies = None):
+        super().__init__()
         self.cookies = cookies if cookies else settings.ExProperties().cookies
         self.e_url = self.API_URL
         self.e_url_o = "https://e-hentai.org/"
@@ -1299,7 +1346,7 @@ class EHen(CommenHen):
                 payload['gidlist'].append(parsed_url)
 
         if payload['gidlist']:
-            self.begin_lock()
+            self.wait_for_api()
             try:
                 if cookies:
                     self.check_cookie(cookies)
@@ -1307,10 +1354,8 @@ class EHen(CommenHen):
                 else:
                     r = requests.post(self.e_url, json=payload, timeout=30, headers=self.HEADERS)
             except requests.ConnectionError as err:
-                self.end_lock()
                 log_e("Could not fetch metadata: {}".format(err))
                 raise app_constants.MetadataFetchFail("connection error")
-            self.end_lock()
             if not self.handle_error(r):
                 return 'error'
         else: return None
@@ -1433,7 +1478,7 @@ class EHen(CommenHen):
             return True
 
         def do_filesearch(filepath):
-            file_search_delay = 5
+            file_search_retry_delay = 10
             if "exhentai" in self.e_url_o:
                 f_url = "https://exhentai.org/upload/image_lookup.php/"
             else:
@@ -1442,22 +1487,32 @@ class EHen(CommenHen):
                 self.check_cookie(cookies)
                 self._browser.session.cookies.update(self.COOKIES)
             log_d("searching with color img: {}".format(filepath))
-            files = {'sfile': open(filepath,'rb')}
             values = {'fs_similar': '1'}
             if app_constants.INCLUDE_EH_EXPUNGED:
                 values['fs_exp'] = '1'
-            try:
-                r = self._browser.session.post(f_url, files=files, data=values)
-            except requests.ConnectionError:
-                time.sleep(file_search_delay+3)
-                r = self._browser.session.post(f_url, files=files, data=values)
-                
-            s = BeautifulSoup(r.text, "html.parser")
-            if "Please wait a bit longer between each file search." in "{}".format(s):
-                log_e("Retrying filesearch due to interval response with delay: {}".format(file_search_delay))
-                time.sleep(file_search_delay)
-                s = do_filesearch(filepath)
-            return s
+
+            for attempt in range(2):
+                try:
+                    with open(filepath, 'rb') as image_file:
+                        files = {'sfile': image_file}
+                        r = self._browser.session.post(
+                            f_url, files=files, data=values)
+                except requests.ConnectionError:
+                    if attempt:
+                        raise
+                    time.sleep(file_search_retry_delay)
+                    continue
+
+                soup = BeautifulSoup(r.text, "html.parser")
+                if "Please wait a bit longer between each file search." \
+                        not in "{}".format(soup):
+                    return soup
+                if attempt:
+                    return soup
+                log_e(
+                    "Retrying file search after server rate-limit response")
+                time.sleep(file_search_retry_delay)
+            return soup
 
 
         found_galleries = {}
@@ -1465,7 +1520,7 @@ class EHen(CommenHen):
         log_d("search strings: ".format(search_string))
         for h in search_string:
             log_d('Hash search: {}'.format(h))
-            self.begin_lock()
+            self.wait_for_search()
             try:
                 if 'color' in kwargs:
                     soup = do_filesearch(h)
@@ -1484,10 +1539,8 @@ class EHen(CommenHen):
                         return 'error'
                     soup = BeautifulSoup(r.text, "html.parser")
             except requests.ConnectionError as err:
-                self.end_lock()
                 log.exception("Could not search for gallery: {}".format(err))
                 raise app_constants.MetadataFetchFail("connection error")
-            self.end_lock()
 
             if not no_hits_found_check(soup):
                 log_e('No hits found with hash/image: {}'.format(h))
@@ -1509,6 +1562,10 @@ class EHen(CommenHen):
                         g_url = gallery.a.attrs['href']
                         found_galleries[h].append((title,g_url))
             except AttributeError:
+                # A repeated rate-limit or other error page has a body but no
+                # gallery result container. Do not report it as an empty hit,
+                # which would later be indexed as if it contained a URL.
+                found_galleries.pop(h, None)
                 log.exception('Unparseable html')
                 log_d("\n{}\n".format(soup.prettify()))
                 continue
@@ -1538,6 +1595,7 @@ class ChaikaHen(CommenHen):
     g_api_url = "http://panda.chaika.moe/jsearch?gallery="
     a_api_url = "http://panda.chaika.moe/jsearch?archive="
     def __init__(self):
+        super().__init__()
         self.url = "http://panda.chaika.moe/jsearch?sha1="
         self._QUEUE_LIMIT = 1
 

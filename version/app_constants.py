@@ -235,7 +235,7 @@ HASH_GALLERY_PAGES = get('all', 'Advanced', 'hash gallery pages', int, str)
 
 # WEB
 INCLUDE_EH_EXPUNGED = get(False, 'Web', 'include eh expunged', bool)
-GLOBAL_EHEN_TIME = get(5, 'Web', 'global ehen time offset', int)
+GLOBAL_EHEN_TIME = get(3, 'Web', 'global ehen time offset', int)
 GLOBAL_EHEN_LOCK = False
 DEFAULT_EHEN_URL = get('https://e-hentai.org/', 'Web', 'default ehen url', str)
 REPLACE_METADATA = get(False, 'Web', 'replace metadata', bool)
