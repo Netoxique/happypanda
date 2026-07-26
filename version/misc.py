@@ -1615,7 +1615,10 @@ class NotificationOverlay(QWidget):
         self._lbl = QLabel()
         self._main_layout.addWidget(self._lbl)
         self._lbl.setAlignment(Qt.AlignCenter)
-        self.setContentsMargins(-10,-10,-10,-10)
+        # Keep the label inside the notification bar's 20-pixel height.
+        # Negative widget margins used to cancel the layout's default inset,
+        # but current Qt versions clamp those margins to zero.
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._click = False
         self._override_hide = False
         self.text_queue = []
