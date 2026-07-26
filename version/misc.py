@@ -581,10 +581,11 @@ class GalleryMetaWindow(ArrowWindow):
         self.g_widget.apply_gallery(gallery)
         self.g_widget.resize(self.width() - self.content_margin,
                                      self.height() - self.content_margin)
+        arrow_size = self.arrow_size.toSize()
         if self.direction == self.LEFT:
-            start_point = QPoint(self.arrow_size.width(), 0)
+            start_point = QPoint(arrow_size.width(), 0)
         elif self.direction == self.TOP:
-            start_point = QPoint(0, self.arrow_size.height())
+            start_point = QPoint(0, arrow_size.height())
         else:
             start_point = QPoint(0, 0)
         # title
