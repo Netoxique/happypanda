@@ -1,10 +1,13 @@
 """Regression tests for E-Hentai metadata source selection."""
 import os
 import sys
+import io
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -12,6 +15,7 @@ VERSION_DIR = Path(__file__).resolve().parents[1] / 'version'
 sys.path.insert(0, str(VERSION_DIR))
 
 import fetch
+import gallerydb
 import pewnet
 import settingsdialog
 from PyQt5.QtWidgets import QApplication
@@ -285,3 +289,45 @@ def test_empty_search_result_is_reported_without_crashing():
 
     assert fetcher.error_galleries == [
         (gallery, 'Could not find url for gallery')]
+
+
+def test_archive_hash_ignores_json_and_text_entries(tmp_path, monkeypatch):
+    archive_path = tmp_path / 'gallery.zip'
+    temp_path = tmp_path / 'temp'
+    temp_path.mkdir()
+    monkeypatch.setattr(gallerydb.app_constants, 'temp_dir', str(temp_path))
+    image_bytes = io.BytesIO()
+    Image.new('RGB', (2, 2), color='red').save(image_bytes, format='PNG')
+    with zipfile.ZipFile(str(archive_path), 'w') as archive:
+        archive.writestr('galleryinfo.txt', b'metadata')
+        archive.writestr('metadata.json', b'{}')
+        archive.writestr('001.png', image_bytes.getvalue())
+
+    gallery = gallerydb.Gallery()
+    gallery.path = str(archive_path)
+    gallery.is_archive = 1
+    chapter = gallery.chapters.create_chapter()
+    chapter.path = ''
+    chapter.pages = 1
+
+    result = gallerydb.HashDB.gen_gallery_hash(
+        gallery, 0, 'mid', color_img=True)
+
+    assert result['color'].endswith('001.png')
+
+
+def test_archive_without_images_returns_empty_hash(tmp_path):
+    archive_path = tmp_path / 'metadata-only.zip'
+    with zipfile.ZipFile(str(archive_path), 'w') as archive:
+        archive.writestr('galleryinfo.txt', b'metadata')
+        archive.writestr('metadata.json', b'{}')
+
+    gallery = gallerydb.Gallery()
+    gallery.path = str(archive_path)
+    gallery.is_archive = 1
+    chapter = gallery.chapters.create_chapter()
+    chapter.path = ''
+    chapter.pages = 0
+
+    assert gallerydb.HashDB.gen_gallery_hash(
+        gallery, 0, 'mid', color_img=True) == {}

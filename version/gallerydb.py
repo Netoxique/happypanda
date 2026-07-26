@@ -1261,16 +1261,32 @@ class HashDB(DBBase):
                     log_e('Could not generate hash: CreateZipFail')
                     return {}
 
+                con = sorted(
+                    item for item in zip.dir_contents(chap.path)
+                    if item.lower().endswith(IMG_FILES))
+                if not con:
+                    zip.close()
+                    log_w("Could not generate hash: archive contains no images")
+                    return {}
+
                 pages = {}
                 if page != None:
                     p = 0
-                    con = sorted(zip.dir_contents(chap.path))
                     if color_img:
                         # if first img is colored, then return hash of that
                         f_bytes = io.BytesIO(zip.open(con[0], False))
-                        if not utils.image_greyscale(f_bytes):
-                            return {'color':zip.extract(con[0])}
-                        f_bytes.close()
+                        try:
+                            is_greyscale = utils.image_greyscale(f_bytes)
+                        except OSError:
+                            zip.close()
+                            log_w("Could not generate hash: unreadable image")
+                            return {}
+                        finally:
+                            f_bytes.close()
+                        if not is_greyscale:
+                            color_path = zip.extract(con[0])
+                            zip.close()
+                            return {'color':color_path}
                     if page == 'mid':
                         p = len(con) // 2
                         img = con[p]
@@ -1285,8 +1301,7 @@ class HashDB(DBBase):
 
 
                 else:
-                    imgs = sorted(zip.dir_contents(chap.path))
-                    for n, img in enumerate(imgs):
+                    for n, img in enumerate(con):
                         pages[n] = zip.open(img, True)
                 zip.close()
 
