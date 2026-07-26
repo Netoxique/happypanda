@@ -363,7 +363,7 @@ class AppWindow(QMainWindow):
                 log_d('Checking Update')
                 time.sleep(1.5)
                 try:
-                    r = requests.get("https://raw.githubusercontent.com/Pewpews/happypanda/master/VS.txt")
+                    r = requests.get("https://raw.githubusercontent.com/Netoxique/happypanda/master/VS.txt")
                     a = r.text
                     vs = a.strip()
                     self.UPDATE_CHECK.emit(vs)
@@ -377,7 +377,7 @@ class AppWindow(QMainWindow):
                 if len(vs) < 10:
                     self.notification_bar.begin_show()
                     self.notification_bar.add_text("Version {} of Happypanda is".format(vs) + " available. Click here to update!", False)
-                    self.notification_bar.clicked.connect(lambda: utils.open_web_link('https://github.com/Pewpews/happypanda/releases'))
+                    self.notification_bar.clicked.connect(lambda: utils.open_web_link('https://github.com/Netoxique/happypanda/releases'))
                     self.notification_bar.set_clickable(True)
                 else:
                     self.notification_bar.add_text("An error occurred while checking for new version")
