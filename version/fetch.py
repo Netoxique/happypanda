@@ -181,6 +181,7 @@ class Fetch(QObject):
 
             new_gallery.title = parsed['title']
             new_gallery.path = temp_p
+            new_gallery.date_modified = utils.gallery_source_modified(temp_p)
             new_gallery.artist = parsed['artist']
             new_gallery.language = parsed['language']
             new_gallery.info = ""

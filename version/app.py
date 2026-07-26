@@ -207,6 +207,14 @@ class AppWindow(QMainWindow):
 
     def init_watchers(self):
 
+        self._monitor_delete_timers = {}
+        self._monitor_refresh_timers = {}
+        self._monitor_refresh_threads = {}
+        self._monitor_forced_refresh = set()
+
+        def normalized(path):
+            return os.path.normcase(os.path.abspath(path))
+
         def remove_gallery(g):
             index = gallery.CommonView.find_index(self.get_current_view(), g.id, True)
             if index:
@@ -228,11 +236,106 @@ class AppWindow(QMainWindow):
             self.gallery_populate([path])
 
         def modified(path, gallery):
-            mod_popup = io_misc.ModifiedPopup(path, gallery, self)
+            gallery_path = normalized(gallery.path)
+            pending_delete = self._monitor_delete_timers.pop(
+                gallery_path, None)
+            if pending_delete:
+                pending_delete.stop()
+                pending_delete.deleteLater()
+                self._monitor_forced_refresh.add(gallery.id)
+
+            old_timer = self._monitor_refresh_timers.pop(gallery.id, None)
+            if old_timer:
+                old_timer.stop()
+                old_timer.deleteLater()
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(
+                lambda g=gallery: refresh_gallery_source(g))
+            self._monitor_refresh_timers[gallery.id] = timer
+            timer.start(2000)
+
+        def refresh_gallery_source(gallery_object):
+            timer = self._monitor_refresh_timers.pop(
+                gallery_object.id, None)
+            if timer:
+                timer.deleteLater()
+            if gallery_object.id in self._monitor_refresh_threads:
+                self._monitor_forced_refresh.add(gallery_object.id)
+                return
+            if not os.path.exists(gallery_object.path):
+                return
+
+            forced = gallery_object.id in self._monitor_forced_refresh
+            self._monitor_forced_refresh.discard(gallery_object.id)
+            observed = utils.gallery_source_modified(gallery_object.path)
+            if not forced and observed == gallery_object.date_modified:
+                return
+
+            thread = QThread(self)
+            worker = io_misc.GallerySourceUpdate(gallery_object)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+
+            def finish(updated_gallery):
+                model = self.default_manga_view.gallery_model
+                if model.rowCount():
+                    model.dataChanged.emit(
+                        model.index(0, 0),
+                        model.index(model.rowCount() - 1,
+                                    model.columnCount() - 1))
+                self.notification_bar.add_text(
+                    'Updated gallery source: {}'.format(
+                        updated_gallery.title))
+                thread.quit()
+
+            def failed(failed_gallery, message):
+                self.notification_bar.add_text(
+                    'Could not update gallery source: {}'.format(
+                        failed_gallery.title))
+                log_e("Monitored gallery refresh failed: %s", message)
+                thread.quit()
+
+            def cleanup():
+                self._monitor_refresh_threads.pop(
+                    gallery_object.id, None)
+                if gallery_object.id in self._monitor_forced_refresh:
+                    modified(gallery_object.path, gallery_object)
+
+            worker.finished.connect(finish)
+            worker.failed.connect(failed)
+            worker.finished.connect(worker.deleteLater)
+            worker.failed.connect(worker.deleteLater)
+            thread.finished.connect(cleanup)
+            thread.finished.connect(thread.deleteLater)
+            self._monitor_refresh_threads[gallery_object.id] = (
+                thread, worker)
+            thread.start()
+
         def deleted(path, gallery):
-            d_popup = io_misc.DeletedPopup(path, gallery, self)
-            d_popup.UPDATE_SIGNAL.connect(update_gallery)
-            d_popup.REMOVE_SIGNAL.connect(remove_gallery)
+            gallery_path = normalized(path)
+            old_timer = self._monitor_delete_timers.pop(
+                gallery_path, None)
+            if old_timer:
+                old_timer.stop()
+                old_timer.deleteLater()
+
+            def confirm_deleted():
+                self._monitor_delete_timers.pop(gallery_path, None)
+                if os.path.exists(path):
+                    self._monitor_forced_refresh.add(gallery.id)
+                    modified(path, gallery)
+                    return
+                d_popup = io_misc.DeletedPopup(path, gallery, self)
+                d_popup.UPDATE_SIGNAL.connect(update_gallery)
+                d_popup.REMOVE_SIGNAL.connect(remove_gallery)
+
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(confirm_deleted)
+            self._monitor_delete_timers[gallery_path] = timer
+            timer.start(2000)
+
         def moved(new_path, gallery):
             mov_popup = io_misc.MovedPopup(new_path, gallery, self)
             mov_popup.UPDATE_SIGNAL.connect(update_gallery)

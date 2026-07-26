@@ -6,7 +6,8 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QListWidget, QWidget,
                              QCheckBox, QRadioButton, QSpinBox, QSizePolicy,
                              QScrollArea, QFontDialog, QMessageBox, QComboBox,
                              QFileDialog, QSlider, QButtonGroup)
-from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtWidgets import QProgressDialog
+from PyQt5.QtCore import pyqtSignal, Qt, QObject, QThread
 from PyQt5.QtGui import QPalette, QPixmapCache
 
 from color_line_edit import ColorLineEdit
@@ -26,6 +27,57 @@ log_d = log.debug
 log_w = log.warning
 log_e = log.error
 log_c = log.critical
+
+
+class DateModifiedUpdater(QObject):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(object)
+
+    def __init__(self, galleries):
+        super().__init__()
+        self.galleries = list(galleries)
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+    def run(self):
+        summary = {
+            'updated': 0,
+            'unchanged': 0,
+            'skipped': 0,
+            'failed': 0,
+            'values': {},
+            'cancelled': False,
+        }
+        gallerydb.execute(gallerydb.GalleryDB.begin, False)
+        try:
+            for position, gallery in enumerate(self.galleries, 1):
+                if self.cancelled:
+                    summary['cancelled'] = True
+                    break
+                try:
+                    modified = utils.gallery_source_modified(gallery.path)
+                    if modified is None:
+                        summary['skipped'] += 1
+                    elif modified == gallery.date_modified:
+                        summary['unchanged'] += 1
+                    else:
+                        gallerydb.execute(
+                            gallerydb.GalleryDB.modify_gallery, False,
+                            gallery.id, date_modified=modified)
+                        summary['values'][gallery.id] = modified
+                        summary['updated'] += 1
+                except Exception:
+                    log.exception(
+                        "Could not update Date Modified for gallery %s",
+                        gallery.id)
+                    summary['failed'] += 1
+                self.progress.emit(position)
+        finally:
+            gallerydb.execute(gallerydb.GalleryDB.end, False)
+        self.finished.emit(summary)
+
 
 class SettingsDialog(QWidget):
     "A settings dialog"
@@ -1279,6 +1331,19 @@ class SettingsDialog(QWidget):
         ex_imp_btn_l.addWidget(export_btn)
         advanced_impexp_l.addRow(ex_imp_btn_l)
 
+        # Advanced / Database / Maintenance
+        advanced_maintenance, advanced_maintenance_l = groupbox(
+            'Maintenance', QFormLayout, advanced_db_page)
+        advanced_db_page_l.addRow(advanced_maintenance)
+        modified_info = QLabel(
+            'Scan gallery sources and populate Date Modified for existing '
+            'galleries. Missing or inaccessible sources are left unchanged.')
+        modified_info.setWordWrap(True)
+        advanced_maintenance_l.addRow(modified_info)
+        update_modified_btn = QPushButton('Recalculate Date Modified...')
+        update_modified_btn.clicked.connect(self.recalculate_date_modified)
+        advanced_maintenance_l.addRow(update_modified_btn)
+
 
         # About
         about = QTabWidget(self)
@@ -1330,6 +1395,56 @@ class SettingsDialog(QWidget):
         k_short_info = QLabel(app_constants.KEYBOARD_SHORTCUTS_INFO)
         k_short_info.setWordWrap(True)
         about_k_shortcuts_l.addRow(k_short_info)
+
+    def recalculate_date_modified(self):
+        answer = QMessageBox.question(
+            self, 'Recalculate Date Modified',
+            'Scan all gallery sources and update their Date Modified values?',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+
+        galleries = list(app_constants.GALLERY_DATA)
+        progress = QProgressDialog(
+            'Scanning gallery sources...', 'Cancel', 0, len(galleries), self)
+        progress.setWindowTitle('Recalculate Date Modified')
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+
+        thread = QThread(self)
+        worker = DateModifiedUpdater(galleries)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        progress.canceled.connect(worker.cancel, Qt.DirectConnection)
+        worker.progress.connect(progress.setValue)
+
+        def done(summary):
+            for gallery in galleries:
+                if gallery.id in summary['values']:
+                    gallery.date_modified = summary['values'][gallery.id]
+            if self.parent_widget:
+                model = self.parent_widget.default_manga_view.gallery_model
+                if model.rowCount():
+                    model.dataChanged.emit(
+                        model.index(0, 0),
+                        model.index(model.rowCount() - 1,
+                                    model.columnCount() - 1))
+            progress.close()
+            thread.quit()
+            suffix = '\nThe scan was cancelled.' if summary['cancelled'] else ''
+            QMessageBox.information(
+                self, 'Date Modified',
+                'Updated: {updated}\nUnchanged: {unchanged}\n'
+                'Skipped: {skipped}\nFailed: {failed}{suffix}'.format(
+                    suffix=suffix, **summary))
+
+        worker.finished.connect(done)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._date_modified_thread = thread
+        self._date_modified_worker = worker
+        self._date_modified_progress = progress
+        thread.start()
 
     @staticmethod
     def _get_color_line_edit_and_hbox_layout(hex_color=None):

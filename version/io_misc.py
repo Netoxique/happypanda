@@ -451,6 +451,52 @@ class ModifiedPopup(misc.BasePopup):
         self.main_widget.setLayout(main_layout)
         self.show()
 
+
+class GallerySourceUpdate(QObject):
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(object, str)
+
+    def __init__(self, gallery):
+        super().__init__()
+        self.gallery = gallery
+
+    def run(self):
+        try:
+            refreshed = gallerydb.Gallery()
+            refreshed.id = self.gallery.id
+            refreshed.path = self.gallery.path
+            refreshed.path_in_archive = self.gallery.path_in_archive
+            if self.gallery.is_archive and self.gallery.path_in_archive:
+                refreshed.is_archive = 1
+                chapter = refreshed.chapters.create_chapter()
+                chapter.path = self.gallery.path_in_archive
+                chapter.in_archive = 1
+                chapter.title = utils.title_parser(
+                    self.gallery.path_in_archive.replace('/', ''))['title']
+                archive = utils.ArchiveFile(self.gallery.path)
+                try:
+                    chapter.pages = len([
+                        item for item in archive.dir_contents(chapter.path)
+                        if item.lower().endswith(utils.IMG_FILES)
+                    ])
+                finally:
+                    archive.close()
+            else:
+                utils.make_chapters(refreshed)
+            self.gallery.chapters = refreshed.chapters
+            self.gallery.is_archive = refreshed.is_archive
+            self.gallery.date_modified = utils.gallery_source_modified(
+                self.gallery.path)
+            self.gallery.dead_link = False
+            gallerydb.execute(
+                gallerydb.GalleryDB.refresh_gallery_source,
+                False, self.gallery)
+            self.finished.emit(self.gallery)
+        except Exception as exc:
+            log.exception(
+                "Could not refresh monitored gallery %s", self.gallery.id)
+            self.failed.emit(self.gallery, str(exc))
+
 #class CreatedPopup(misc.BasePopup):
 #	ADD_SIGNAL = pyqtSignal(str)
 #	def __init__(self, path, parent=None):
@@ -586,7 +632,7 @@ class DeletedPopup(misc.BasePopup):
 
 class GalleryHandler(FileSystemEventHandler, QObject):
     CREATE_SIGNAL = pyqtSignal(str)
-    MODIFIED_SIGNAL = pyqtSignal(str, int)
+    MODIFIED_SIGNAL = pyqtSignal(str, object)
     DELETED_SIGNAL = pyqtSignal(str, object)
     MOVED_SIGNAL = pyqtSignal(str, object)
 
@@ -608,6 +654,35 @@ class GalleryHandler(FileSystemEventHandler, QObject):
             return True
         return False
 
+    @staticmethod
+    def _galleries_for_path(path):
+        normalized = os.path.normcase(os.path.abspath(path))
+        matches = []
+        best_length = -1
+        for gallery in list(app_constants.GALLERY_DATA):
+            gallery_path = os.path.normcase(os.path.abspath(gallery.path))
+            if normalized == gallery_path or (
+                    not gallery.is_archive and
+                    normalized.startswith(gallery_path + os.sep)):
+                if len(gallery_path) > best_length:
+                    matches = [gallery]
+                    best_length = len(gallery_path)
+                elif len(gallery_path) == best_length:
+                    matches.append(gallery)
+        return matches
+
+    @classmethod
+    def _gallery_for_path(cls, path):
+        matches = cls._galleries_for_path(path)
+        return matches[0] if matches else None
+
+    @staticmethod
+    def _relevant_child(event):
+        if event.is_directory:
+            return True
+        return event.src_path.lower().endswith(
+            utils.IMG_FILES + utils.ARCHIVE_FILES)
+
     #def process_queue(self, type):
     #	if self.g_queue:
     #		if type == 'create':
@@ -617,6 +692,11 @@ class GalleryHandler(FileSystemEventHandler, QObject):
 
     def on_created(self, event):
         if not app_constants.OVERRIDE_MONITOR:
+            galleries = self._galleries_for_path(event.src_path)
+            if galleries and self._relevant_child(event):
+                for gallery in galleries:
+                    self.MODIFIED_SIGNAL.emit(event.src_path, gallery)
+                return
             if self.file_filter(event):
                 gs = 0
                 if event.src_path.endswith(utils.ARCHIVE_FILES):
@@ -631,24 +711,52 @@ class GalleryHandler(FileSystemEventHandler, QObject):
 
     def on_deleted(self, event):
         if not app_constants.OVERRIDE_MONITOR:
-            if self.file_filter(event):
-                path = event.src_path
-                gallery = gallerydb.GalleryDB.get_gallery_by_path(path)
-                if gallery:
+            path = event.src_path
+            gallery = self._gallery_for_path(path)
+            if gallery and self._relevant_child(event):
+                if os.path.normcase(os.path.abspath(path)) == \
+                        os.path.normcase(os.path.abspath(gallery.path)):
                     self.DELETED_SIGNAL.emit(path, gallery)
+                else:
+                    self.MODIFIED_SIGNAL.emit(path, gallery)
         else:
             app_constants.OVERRIDE_MONITOR = False
 
     def on_modified(self, event):
-        pass
+        if not app_constants.OVERRIDE_MONITOR:
+            galleries = self._galleries_for_path(event.src_path)
+            if galleries and self._relevant_child(event):
+                for gallery in galleries:
+                    self.MODIFIED_SIGNAL.emit(event.src_path, gallery)
+        else:
+            app_constants.OVERRIDE_MONITOR = False
 
     def on_moved(self, event):
         if not app_constants.OVERRIDE_MONITOR:
-            if self.file_filter(event):
-                old_path = event.src_path
-                gallery = gallerydb.GalleryDB.get_gallery_by_path(old_path)
-                if gallery:
-                    self.MOVED_SIGNAL.emit(event.dest_path, gallery)
+            old_path = event.src_path
+            source_galleries = self._galleries_for_path(old_path)
+            exact_source = [
+                gallery for gallery in source_galleries
+                if os.path.normcase(os.path.abspath(gallery.path)) ==
+                os.path.normcase(os.path.abspath(old_path))
+            ]
+            if exact_source and self.file_filter(event):
+                self.MOVED_SIGNAL.emit(event.dest_path, exact_source[0])
+                return
+
+            affected = {
+                gallery.id: gallery
+                for gallery in source_galleries +
+                self._galleries_for_path(event.dest_path)
+            }
+            relevant_move = event.is_directory or \
+                event.src_path.lower().endswith(
+                    utils.IMG_FILES + utils.ARCHIVE_FILES) or \
+                event.dest_path.lower().endswith(
+                    utils.IMG_FILES + utils.ARCHIVE_FILES)
+            if affected and relevant_move:
+                for gallery in affected.values():
+                    self.MODIFIED_SIGNAL.emit(event.dest_path, gallery)
         else:
             app_constants.OVERRIDE_MONITOR = False
 
@@ -730,6 +838,7 @@ class GalleryImpExpData:
                                 self.structure['pub_date'], "%Y-%m-%d %H:%M:%S")
                         g.date_added = datetime.datetime.strptime(
                                 self.structure['date_added'], "%Y-%m-%d %H:%M:%S")
+                        g.date_modified = self.structure.get('date_modified')
                         g.type = self.structure['type']
                         g.status = self.structure['status']
                         if self.structure['last_read'] and self.structure['last_read'] != 'None':
@@ -762,6 +871,7 @@ class GalleryImpExpData:
                             status=g.status,
                             pub_date=g.pub_date,
                             date_added=g.date_added,
+                            date_modified=g.date_modified,
                             link=g.link,
                             times_read=g.times_read,
                             _db_v=g._db_v,
@@ -877,6 +987,7 @@ class ImportExport(QObject):
             g_data['pub_date'] = "{}".format(g.pub_date)
             g_data['last_read'] = "{}".format(g.last_read)
             g_data['date_added'] = "{}".format(g.date_added)
+            g_data['date_modified'] = g.date_modified
             g_data['times_read'] = g.times_read
             g_data['exed'] = g.exed
             g_data['db_v'] = g._db_v

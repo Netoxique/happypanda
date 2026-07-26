@@ -167,6 +167,7 @@ def gallery_map(row, gallery, chapters=True, tags=True, hashes=True):
     gallery.pub_date = convert_date(row['pub_date'])
     gallery.last_read = convert_date(row['last_read'])
     gallery.date_added = convert_date(row['date_added'])
+    gallery.date_modified = row['date_modified']
     gallery.times_read = row['times_read']
     gallery._db_v = row['db_v']
     gallery.exed = row['exed']
@@ -219,10 +220,10 @@ def default_exec(object):
         else:
             return obj
     executing = ["""INSERT INTO series(title, artist, profile, series_path, is_archive, path_in_archive,
-                    info, type, fav, language, rating, status, pub_date, date_added, last_read, link,
+                    info, type, fav, language, rating, status, pub_date, date_added, date_modified, last_read, link,
                     times_read, db_v, exed, view)
                 VALUES(:title, :artist, :profile, :series_path, :is_archive, :path_in_archive, :info, :type, :fav, :language,
-                    :rating, :status, :pub_date, :date_added, :last_read, :link, :times_read, :db_v, :exed, :view)""",
+                    :rating, :status, :pub_date, :date_added, :date_modified, :last_read, :link, :times_read, :db_v, :exed, :view)""",
                 {
                 'title':check(object.title),
                 'artist':check(object.artist),
@@ -238,6 +239,7 @@ def default_exec(object):
                 'status':check(object.status),
                 'pub_date':check(object.pub_date),
                 'date_added':check(object.date_added),
+                'date_modified':check(object.date_modified),
                 'last_read':check(object.last_read),
                 'link':str.encode(object.link),
                 'times_read':check(object.times_read),
@@ -330,7 +332,8 @@ class GalleryDB(DBBase):
                 exed=gallery.exed,
                 is_archive=gallery.is_archive,
                 path_in_archive=gallery.path_in_archive,
-                view=gallery.view)
+                view=gallery.view,
+                date_modified=gallery.date_modified)
             if thumb:
                 GalleryDB.rebuild_thumb(gallery)
         except:
@@ -339,10 +342,27 @@ class GalleryDB(DBBase):
         return True
 
     @classmethod
+    def refresh_gallery_source(cls, gallery):
+        """Replace source-derived data while preserving user metadata."""
+        assert isinstance(gallery, Gallery)
+        HashDB.del_gallery_hashes(gallery.id)
+        ChapterDB.del_all_chapters(gallery.id)
+        ChapterDB.add_chapters(gallery)
+        cls.modify_gallery(
+            gallery.id,
+            is_archive=gallery.is_archive,
+            path_in_archive=gallery.path_in_archive,
+            date_modified=gallery.date_modified)
+        gallery.hashes = HashDB.rebuild_gallery_hashes(gallery)
+        cls.rebuild_thumb(gallery)
+        return gallery
+
+    @classmethod
     def modify_gallery(cls, series_id, title=None, profile=None, artist=None, info=None, type=None, fav=None,
                    tags=None, language=None, rating=None, status=None, pub_date=None, link=None,
                    times_read=None, last_read=None, series_path=None, chapters=None, _db_v=None,
-                   hashes=None, exed=None, is_archive=None, path_in_archive=None, view=None, date_added=None):
+                   hashes=None, exed=None, is_archive=None, path_in_archive=None, view=None, date_added=None,
+                   date_modified=None):
         "Modifies gallery with given gallery id"
         assert isinstance(series_id, int)
         assert not isinstance(series_id, bool)
@@ -396,6 +416,8 @@ class GalleryDB(DBBase):
             executing.append(["UPDATE series SET view=? WHERE series_id=?", (view, series_id)])
         if date_added != None:
             executing.append(["UPDATE series SET date_added=? WHERE series_id=?", (date_added, series_id)])
+        if date_modified != None:
+            executing.append(["UPDATE series SET date_modified=? WHERE series_id=?", (date_modified, series_id)])
 
         if tags != None:
             assert isinstance(tags, dict)
@@ -472,6 +494,8 @@ class GalleryDB(DBBase):
         "Adds gallery of <Gallery> class into database"
         assert isinstance(object, Gallery), "add_gallery method only accepts gallery items"
         log_i('Recevied gallery: {}'.format(object.path.encode(errors='ignore')))
+        if object.date_modified is None:
+            object.date_modified = utils.gallery_source_modified(object.path)
 
         #TODO: implement mass gallery adding!  User execute_many method for
         #effeciency!
@@ -1505,6 +1529,7 @@ class Gallery:
     tags <- list of str
     pub_date <- date
     date_added <- date, will be defaulted to today if not specified
+    date_modified <- source filesystem modification time as UTC epoch seconds
     last_read <- timestamp (e.g. time.time())
     times_read <- an integer telling us how many times the gallery has been opened
     hashes <- a list of hashes of the gallery's chapters
@@ -1534,6 +1559,7 @@ class Gallery:
         self.tags = {}
         self.pub_date = None
         self.date_added = datetime.datetime.now().replace(microsecond=0)
+        self.date_modified = None
         self.last_read = None
         self.times_read = 0
         self.valid = False

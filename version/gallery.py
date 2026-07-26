@@ -308,6 +308,18 @@ class SortFilterModel(QSortFilterProxyModel):
             return False
         return True
 
+    def lessThan(self, left, right):
+        if self.sortRole() == GalleryModel.DATE_MODIFIED_ROLE:
+            left_gallery = left.data(GalleryModel.GALLERY_ROLE)
+            right_gallery = right.data(GalleryModel.GALLERY_ROLE)
+            left_unknown = left_gallery.date_modified is None
+            right_unknown = right_gallery.date_modified is None
+            if left_unknown != right_unknown:
+                if self.sortOrder() == Qt.DescendingOrder:
+                    return left_unknown
+                return not left_unknown
+        return super().lessThan(left, right)
+
     def dropMimeData(self, data, action, row, coloumn, index):
         if not self.canDropMimeData(data, action, row, coloumn, index):
             return False
@@ -455,6 +467,7 @@ class GalleryModel(QAbstractTableModel):
     TIME_ROLE = Qt.UserRole + 8
     RATING_ROLE = Qt.UserRole + 9
     RATING_COUNT = Qt.UserRole + 10
+    DATE_MODIFIED_ROLE = Qt.UserRole + 11
 
     ROWCOUNT_CHANGE = pyqtSignal()
     STATUSBAR_MSG = pyqtSignal(str)
@@ -480,6 +493,7 @@ class GalleryModel(QAbstractTableModel):
         self._LINK = app_constants.LINK
         self._DESCR = app_constants.DESCR
         self._DATE_ADDED = app_constants.DATE_ADDED
+        self._DATE_MODIFIED = app_constants.DATE_MODIFIED
         self._PUB_DATE = app_constants.PUB_DATE
 
         self._data = data
@@ -538,6 +552,10 @@ class GalleryModel(QAbstractTableModel):
                     return qdate_g_pdt
                 else:
                     return 'No date set'
+            elif current_column == self._DATE_MODIFIED:
+                if current_gallery.date_modified is None:
+                    return 'Unknown'
+                return QDateTime.fromSecsSinceEpoch(current_gallery.date_modified)
 
         # TODO: name all these roles and put them in app_constants...
 
@@ -614,6 +632,10 @@ class GalleryModel(QAbstractTableModel):
             date_added = "{}".format(current_gallery.date_added)
             qdate_added = QDateTime.fromString(date_added, "yyyy-MM-dd HH:mm:ss")
             return qdate_added
+
+        if role == self.DATE_MODIFIED_ROLE:
+            if current_gallery.date_modified is not None:
+                return QDateTime.fromSecsSinceEpoch(current_gallery.date_modified)
         
         if role == self.PUB_DATE_ROLE:
             if current_gallery.pub_date:
@@ -677,6 +699,8 @@ class GalleryModel(QAbstractTableModel):
                 return 'Date Added'
             elif section == self._PUB_DATE:
                 return 'Published'
+            elif section == self._DATE_MODIFIED:
+                return 'Date Modified'
         return section + 1
 
 
@@ -1390,6 +1414,10 @@ class MangaView(QListView):
                 self.sort_model.setSortRole(GalleryModel.DATE_ADDED_ROLE)
                 self.sort_model.sort(0, Qt.DescendingOrder)
                 self.current_sort = 'date_added'
+            elif name == 'date_modified':
+                self.sort_model.setSortRole(GalleryModel.DATE_MODIFIED_ROLE)
+                self.sort_model.sort(0, Qt.DescendingOrder)
+                self.current_sort = 'date_modified'
             elif name == 'pub_date':
                 self.sort_model.setSortRole(GalleryModel.PUB_DATE_ROLE)
                 self.sort_model.sort(0, Qt.DescendingOrder)
@@ -1683,6 +1711,7 @@ class MangaViews:
         self.table_view.setColumnWidth(app_constants.CHAPTERS, 60)
         self.table_view.setColumnWidth(app_constants.LANGUAGE, 100)
         self.table_view.setColumnWidth(app_constants.LINK, 400)
+        self.table_view.setColumnWidth(app_constants.DATE_MODIFIED, 140)
 
         self.view_layout = QStackedLayout()
         # init the chapter view variables
@@ -1758,7 +1787,8 @@ class MangaViews:
              'link':gallery.link,
              'series_path':gallery.path,
              'chapters':gallery.chapters,
-             'exed':gallery.exed}
+             'exed':gallery.exed,
+             'date_modified':gallery.date_modified}
 
             gallerydb.execute(gallerydb.GalleryDB.modify_gallery,
                              True, gallery.id, **kwdict)

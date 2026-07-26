@@ -1,4 +1,5 @@
 *Happypanda v1.2*
+- Added Date Modified sorting, table display, legacy recalculation, and monitored gallery replacement detection.
 - Added WebP image support.
 - Added a reproducible portable Windows x64 build with bundled UnRAR.
 - Improved startup and gallery loading performance.

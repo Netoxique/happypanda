@@ -129,6 +129,7 @@ def series_sql(cols=False):
         'status TEXT',
         'pub_date TEXT',
         'date_added TEXT',
+        'date_modified INTEGER',
         'last_read TEXT',
         'times_read INTEGER',
         'exed INTEGER NOT NULL DEFAULT 0',

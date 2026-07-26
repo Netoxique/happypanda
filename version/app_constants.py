@@ -98,7 +98,7 @@ THUMB_DEFAULT = (THUMB_W_SIZE, THUMB_H_SIZE)
 THUMB_SMALL = (140, 93)
 
 # Columns
-COLUMNS = tuple(range(11))
+COLUMNS = tuple(range(12))
 TITLE = 0
 ARTIST = 1
 DESCR = 2
@@ -110,6 +110,7 @@ LANGUAGE = 7
 LINK = 8
 PUB_DATE = 9
 DATE_ADDED = 10
+DATE_MODIFIED = 11
 
 @enum.unique
 class ViewType(enum.IntEnum):

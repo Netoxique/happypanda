@@ -56,6 +56,37 @@ if not app_constants.unrar_tool_path:
     ARCHIVE_FILES = ('.zip', '.cbz')
 
 
+def gallery_source_modified(path):
+    """Return a gallery source's newest relevant mtime as UTC epoch seconds.
+
+    Archive-backed galleries use the outer archive timestamp. Directory
+    galleries use the newest supported image or archive found recursively.
+    """
+    if not path:
+        return None
+    try:
+        if os.path.isfile(path):
+            if path.lower().endswith(ARCHIVE_FILES):
+                return int(os.path.getmtime(path))
+            return None
+        if not os.path.isdir(path):
+            return None
+
+        newest = None
+        relevant_exts = IMG_FILES + ARCHIVE_FILES
+        for root, _, files in os.walk(path):
+            for name in files:
+                if not name.lower().endswith(relevant_exts):
+                    continue
+                modified = int(os.path.getmtime(os.path.join(root, name)))
+                if newest is None or modified > newest:
+                    newest = modified
+        return newest
+    except OSError:
+        log.exception("Could not read gallery modification date: %s", path)
+        return None
+
+
 def normalize_gallery_category(category):
     """Return the canonical HappyPanda spelling for a gallery category."""
     if not category:

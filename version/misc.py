@@ -237,6 +237,8 @@ class SortMenu(QMenu):
         s_artist.triggered.connect(functools.partial(self.new_sort.emit, 'artist'))
         s_date = self.sort_actions.addAction(QAction("Date Added", self.sort_actions, checkable=True))
         s_date.triggered.connect(functools.partial(self.new_sort.emit, 'date_added'))
+        s_modified = self.sort_actions.addAction(QAction("Date Modified", self.sort_actions, checkable=True))
+        s_modified.triggered.connect(functools.partial(self.new_sort.emit, 'date_modified'))
         s_pub_d = self.sort_actions.addAction(QAction("Date Published", self.sort_actions, checkable=True))
         s_pub_d.triggered.connect(functools.partial(self.new_sort.emit, 'pub_date'))
         s_times_read = self.sort_actions.addAction(QAction("Read Count", self.sort_actions, checkable=True))
@@ -250,6 +252,7 @@ class SortMenu(QMenu):
         self.addSeparator()
         self.addAction(s_artist)
         self.addAction(s_date)
+        self.addAction(s_modified)
         self.addAction(s_pub_d)
         self.addAction(s_last_read)
         self.addAction(s_title)
@@ -275,6 +278,8 @@ class SortMenu(QMenu):
                 check_key(act, 'artist')
             elif act.text() == 'Date Added':
                 check_key(act, 'date_added')
+            elif act.text() == 'Date Modified':
+                check_key(act, 'date_modified')
             elif act.text() == 'Date Published':
                 check_key(act, 'pub_date')
             elif act.text() == 'Read Count':
