@@ -3,6 +3,10 @@
 
 # custom
 *cache
+.build-cache/
+.python-build/
+.venv-build/
+*.egg-info/
 *.pyproj
 *Qt*
 *__pycache__*
