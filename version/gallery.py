@@ -173,6 +173,7 @@ class SortFilterModel(QSortFilterProxyModel):
         self.parent_widget = parent
         self._data = app_constants.GALLERY_DATA
         self._search_ready = False
+        self._startup_loading = False
         self.current_term = ''
         self._history_count = 50
         self._prev_term = ''
@@ -230,7 +231,18 @@ class SortFilterModel(QSortFilterProxyModel):
             self._search_ready = True
 
     def refresh(self):
+        if self._startup_loading:
+            return
         self._DO_SEARCH.emit(self.current_term, self.current_args)
+
+    def begin_startup_load(self):
+        self._startup_loading = True
+        self.setDynamicSortFilter(False)
+
+    def end_startup_load(self):
+        self._startup_loading = False
+        self.setDynamicSortFilter(True)
+        self.refresh()
 
     def init_search(self, term, args=None, **kwargs):
         """
@@ -261,7 +273,8 @@ class SortFilterModel(QSortFilterProxyModel):
         if not history:
             self.HISTORY_SEARCH_TERM.emit(term)
         self.current_args = args
-        self._DO_SEARCH.emit(term, args)
+        if not self._startup_loading:
+            self._DO_SEARCH.emit(term, args)
 
     def filterAcceptsRow(self, source_row, parent_index):
         if self.sourceModel():
@@ -652,13 +665,18 @@ class GalleryModel(QAbstractTableModel):
 
 
     def insertRows(self, position, rows, index=QModelIndex()):
-        self._data_count += rows
         if not self._gallery_to_add:
             return False
 
+        galleries = self._gallery_to_add[:rows]
+        del self._gallery_to_add[:rows]
+        if not galleries:
+            return False
+        rows = len(galleries)
+        self._data_count += rows
+
         self.beginInsertRows(QModelIndex(), position, position + rows - 1)
-        for r in range(rows):
-            self._data.insert(position, self._gallery_to_add.pop())
+        self._data[position:position] = galleries
         self.endInsertRows()
         return True
 

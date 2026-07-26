@@ -15,6 +15,8 @@ def test_init_db(path_isfile_retval, check_dbv_retval, path_is_dbc_path):
             mock.patch('version.database.db.sqlite3') as m_sl3, \
             mock.patch('version.database.db.os') as m_os, \
             mock.patch('version.database.db.create_db_path') as m_create_db_path, \
+            mock.patch('version.database.db.ensure_startup_indexes') as m_indexes, \
+            mock.patch('version.database.db.configure_startup_performance') as m_tune, \
             mock.patch('version.database.db.check_db_version') \
             as m_check_dbv:
         from version.database import db
@@ -32,6 +34,8 @@ def test_init_db(path_isfile_retval, check_dbv_retval, path_is_dbc_path):
                 m_sl3.assert_has_calls([
                     mock.call.connect(path, check_same_thread=False),
                 ])
+                m_indexes.assert_not_called()
+                m_tune.assert_not_called()
                 assert res is None
                 return
             else:
@@ -58,3 +62,5 @@ def test_init_db(path_isfile_retval, check_dbv_retval, path_is_dbc_path):
             ])
         assert res == m_sl3.connect.return_value
         assert res.isolation_level is None
+        m_indexes.assert_called_once_with(res)
+        m_tune.assert_called_once_with(res, path)

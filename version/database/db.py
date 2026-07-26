@@ -12,6 +12,7 @@
 #along with Happypanda.  If not, see <http://www.gnu.org/licenses/>.
 #"""
 
+import ctypes
 import os, sqlite3, threading, queue
 import logging, time, shutil
 
@@ -22,6 +23,75 @@ log_d = log.debug
 log_w = log.warning
 log_e = log.error
 log_c = log.critical
+
+STARTUP_INDEXES = (
+    """CREATE INDEX IF NOT EXISTS idx_chapters_series
+       ON chapters(series_id, chapter_number)""",
+    """CREATE INDEX IF NOT EXISTS idx_hashes_series
+       ON hashes(series_id)""",
+    """CREATE INDEX IF NOT EXISTS idx_series_list_map_series
+       ON series_list_map(series_id, list_id)""",
+)
+
+MIB = 1024 * 1024
+GIB = 1024 * MIB
+
+
+def available_memory_bytes():
+    """Return currently available physical memory without extra dependencies."""
+    if os.name == 'nt':
+        class MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ('dwLength', ctypes.c_ulong),
+                ('dwMemoryLoad', ctypes.c_ulong),
+                ('ullTotalPhys', ctypes.c_ulonglong),
+                ('ullAvailPhys', ctypes.c_ulonglong),
+                ('ullTotalPageFile', ctypes.c_ulonglong),
+                ('ullAvailPageFile', ctypes.c_ulonglong),
+                ('ullTotalVirtual', ctypes.c_ulonglong),
+                ('ullAvailVirtual', ctypes.c_ulonglong),
+                ('ullAvailExtendedVirtual', ctypes.c_ulonglong),
+            ]
+
+        try:
+            status = MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return status.ullAvailPhys
+        except (AttributeError, OSError):
+            pass
+
+    try:
+        return os.sysconf('SC_AVPHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
+    except (AttributeError, OSError, ValueError):
+        return 512 * MIB
+
+
+def startup_memory_budget():
+    """RAM available to transient startup hydration and SQLite caching."""
+    return min(2 * GIB, max(128 * MIB, available_memory_bytes() // 4))
+
+
+def ensure_startup_indexes(conn):
+    """Install backward-compatible lookup indexes used by the startup loader."""
+    with conn:
+        for statement in STARTUP_INDEXES:
+            conn.execute(statement)
+
+
+def configure_startup_performance(conn, path):
+    """Tune SQLite for bulk startup reads while retaining safe RAM headroom."""
+    budget = startup_memory_budget()
+    cache_kib = max(16 * 1024, min(512 * 1024, budget // (4 * 1024)))
+    mmap_bytes = min(GIB, budget // 2)
+    try:
+        mmap_bytes = min(mmap_bytes, max(0, os.path.getsize(path)))
+    except (OSError, TypeError):
+        pass
+
+    conn.execute('PRAGMA cache_size = -{}'.format(cache_kib))
+    conn.execute('PRAGMA mmap_size = {}'.format(mmap_bytes))
+    conn.execute('PRAGMA temp_store = MEMORY')
 
 def hashes_sql(cols=False):
     col_list = [
@@ -305,8 +375,10 @@ def init_db(path=db_constants.DB_PATH):
         create_db_path()
         conn = new_db(path, True)
 
+    ensure_startup_indexes(conn)
     conn.isolation_level = None
     conn.execute("PRAGMA foreign_keys = on")
+    configure_startup_performance(conn, path)
     return conn
 
 class DBBase:

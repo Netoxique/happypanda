@@ -22,6 +22,8 @@ import io
 import uuid
 import functools
 import re as regex
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dateutil import parser as dateparser
 
 from PyQt5.QtCore import QObject, pyqtSignal, QTime
@@ -57,6 +59,12 @@ class PriorityObject:
     def __lt__(self, other):
         return self.p < other.p
 
+
+class MethodException:
+    def __init__(self, exception):
+        self.exception = exception
+
+
 def process_methods():
     """
     Methods are objects.
@@ -85,17 +93,23 @@ def process_methods():
             except IndexError:
                 get_args = 0
         args = tuple(args)
-        if args and kwargs:
-            r = method(*args, **kwargs)
-        elif args:
-            r = method(*args)
-        elif kwargs:
-            r = method(**kwargs)
-        else:
-            r = method()
-        if not no_return:
-            method_return.put(r)
-        method_queue.task_done()
+        try:
+            if args and kwargs:
+                r = method(*args, **kwargs)
+            elif args:
+                r = method(*args)
+            elif kwargs:
+                r = method(**kwargs)
+            else:
+                r = method()
+            if not no_return:
+                method_return.put(r)
+        except Exception as exc:
+            log.exception("Database method failed: %s", getattr(method, '__name__', method))
+            if not no_return:
+                method_return.put(MethodException(exc))
+        finally:
+            method_queue.task_done()
 
 method_queue_thread = threading.Thread(name='Method Queue Thread', target=process_methods,
                                        daemon=True)
@@ -115,7 +129,10 @@ def execute(method, no_return, *args, **kwargs):
         arg_list.append(kwargs)
     method_queue.put(PriorityObject(priority, arg_list))
     if not no_return:
-        return method_return.get()
+        result = method_return.get()
+        if isinstance(result, MethodException):
+            raise result.exception
+        return result
 
 def chapter_map(row, chapter):
     assert isinstance(chapter, Chapter)
@@ -925,7 +942,9 @@ class ListDB(DBBase):
         c = cls.execute(cls, 'SELECT * FROM list')
         list_rows = c.fetchall()
         for l_row in list_rows:
-            l = GalleryList(l_row['list_name'], filter=l_row['list_filter'], id=l_row['list_id'])
+            l = GalleryList(
+                l_row['list_name'], filter=l_row['list_filter'],
+                id=l_row['list_id'], _db=False)
             if l_row['type'] == GalleryList.COLLECTION:
                 l.type = GalleryList.COLLECTION
             elif l_row['type'] == GalleryList.REGULAR:
@@ -1333,7 +1352,7 @@ class GalleryList:
     # types
     REGULAR, COLLECTION = range(2)
 
-    def __init__(self, name, list_of_galleries=[], filter=None, id=None, _db=True):
+    def __init__(self, name, list_of_galleries=None, filter=None, id=None, _db=True):
         self._id = id # shouldnt ever be touched
         self.name = name
         self.profile = ''
@@ -1346,7 +1365,8 @@ class GalleryList:
         self._galleries = set()
         self._ids_chache = []
         self._scanning = False
-        self.add_gallery(list_of_galleries, _db)
+        if list_of_galleries:
+            self.add_gallery(list_of_galleries, _db)
 
     def add_gallery(self, gallery_or_list_of, _db=True, _check_filter=True):
         "add_gallery <- adds a gallery of Gallery class to list"
@@ -1364,7 +1384,7 @@ class GalleryList:
                 self._ids_chache.append(gallery.id)
                 # uses timsort algorithm so it's ok
                 self._ids_chache.sort()
-        if _db:
+        if _db and new_galleries:
             execute(ListDB.add_gallery_to_list, True, new_galleries, self)
 
     def remove_gallery(self, gallery_id_or_list_of):
@@ -2182,65 +2202,222 @@ class DatabaseStartup(QObject):
     START = pyqtSignal()
     DONE = pyqtSignal()
     PROGRESS = pyqtSignal(str)
+    GALLERY_BATCH = pyqtSignal(int, list)
+    BASE_READY = pyqtSignal()
+    METADATA_BATCH = pyqtSignal(list)
+    TAGS_READY = pyqtSignal(dict)
+    PATH_STATUS_BATCH = pyqtSignal(list)
+    FAILED = pyqtSignal(str, str)
     _DB = DBBase()
 
 
     def __init__(self):
         super().__init__()
         ListDB.init_lists()
-        self._fetch_count = 500
+        self._fetch_count = 1000
         self._offset = 0
         self._fetching = False
         self.count = 0
         self._finished = False
         self._loaded_galleries = []
+        self._cancel_event = threading.Event()
 
     def startup(self, manga_views):
         self.START.emit()
+        self._cancel_event.clear()
         self._fetching = True
-        self.count = GalleryDB.gallery_count()
-        remaining = self.count
-        while remaining > 0:
-            self.PROGRESS.emit("Loading galleries: {}".format(remaining))
-            rec_to_fetch = min(remaining, self._fetch_count)
-            self.fetch_galleries(self._offset, rec_to_fetch, manga_views)
-            self._offset += rec_to_fetch
-            remaining = self.count - self._offset
-        [v.list_view.manga_delegate._increment_paint_level() for v in manga_views]
-        self.PROGRESS.emit("Loading chapters...")
-        self.fetch_chapters()
-        self.PROGRESS.emit("Loading tags...")
-        self.fetch_tags()
-        [v.list_view.manga_delegate._increment_paint_level() for v in manga_views]
-        self.PROGRESS.emit("Loading hashes...")
-        self.fetch_hashes()
+        self._finished = False
+        self._offset = 0
+        self._loaded_galleries = []
+
+        try:
+            self.PROGRESS.emit("Loading library...")
+            galleries, tags, hashes, namespace_tags = execute(
+                self._hydrate_snapshot, False)
+        except Exception as exc:
+            self._fetching = False
+            log.exception("Failed to hydrate the library")
+            self.FAILED.emit("database hydration", str(exc))
+            return
+
+        if self._cancel_event.is_set():
+            self._fetching = False
+            return
+
+        self._loaded_galleries = galleries
+        self.count = len(galleries)
+        self.PROGRESS.emit("Displaying galleries...")
+        galleries_by_view = {}
+        for gallery in galleries:
+            galleries_by_view.setdefault(int(gallery.view), []).append(gallery)
+
+        for view_type, view_galleries in galleries_by_view.items():
+            for batch in self._batches(view_galleries):
+                self.GALLERY_BATCH.emit(view_type, batch)
+        self.BASE_READY.emit()
+
+        self.PROGRESS.emit("Attaching tags and hashes...")
+        for gallery_batch in self._batches(galleries):
+            metadata = [
+                (gallery.id, tags.get(gallery.id, {}), hashes.get(gallery.id, []))
+                for gallery in gallery_batch
+            ]
+            self.METADATA_BATCH.emit(metadata)
+        self.TAGS_READY.emit(namespace_tags)
+
         self._fetching = False
+        self._finished = True
         self.DONE.emit()
 
-    def fetch_galleries(self, f, t, manga_views):
-        c = execute(self._DB.execute, False, 'SELECT * FROM series LIMIT {}, {}'.format(f, t))
-        if c:
-            new_data = c.fetchall()
-            gallery_list = execute(GalleryDB.gen_galleries, False, new_data, {"chapters":False, "tags":False, "hashes":False})
-            #self._current_data.extend(gallery_list)
-            if gallery_list:
-                self._loaded_galleries.extend(gallery_list)
-                for view in manga_views:
-                    view_galleries = [g for g in gallery_list if g.view == view.view_type]
-                    view.gallery_model._gallery_to_add = view_galleries
-                    view.gallery_model.insertRows(view.gallery_model.rowCount(), len(view_galleries))
+        self.PROGRESS.emit("Validating gallery paths...")
+        self._validate_paths(galleries)
 
-    def fetch_chapters(self):
-        for g in self._loaded_galleries:
-            g.chapters = execute(ChapterDB.get_chapters_for_gallery, False, g.id)
+    def cancel(self):
+        self._cancel_event.set()
 
-    def fetch_tags(self):
-        for g in self._loaded_galleries:
-            g.tags = execute(TagDB.get_gallery_tags, False, g.id)
+    def _batches(self, values):
+        for offset in range(0, len(values), self._fetch_count):
+            yield values[offset:offset + self._fetch_count]
 
-    def fetch_hashes(self):
-        for g in self._loaded_galleries:
-            g.hashes = execute(HashDB.get_gallery_hashes, False, g.id)
+    @staticmethod
+    def _hydrate_snapshot():
+        """Read and relate the complete library in a fixed number of queries."""
+        conn = DBBase._DB_CONN
+        if not conn:
+            raise db_constants.NoDatabaseConnection
+
+        database_path = db_constants.DB_PATH
+        try:
+            database_path = conn.execute('PRAGMA database_list').fetchone()[2]
+        except (IndexError, TypeError):
+            pass
+
+        materialize = True
+        try:
+            estimated_size = os.path.getsize(database_path) * 8
+            materialize = estimated_size <= db.startup_memory_budget()
+        except (OSError, TypeError):
+            pass
+
+        def rows(cursor):
+            if materialize:
+                return cursor.fetchall()
+            return cursor
+
+        galleries = []
+        gallery_by_id = {}
+        tags_by_gallery = {}
+        hashes_by_gallery = {}
+        namespace_tags = {}
+        list_by_id = {
+            gallery_list._id: gallery_list
+            for gallery_list in app_constants.GALLERY_LISTS
+            if gallery_list._id is not None
+        }
+        for gallery_list in list_by_id.values():
+            gallery_list._galleries.clear()
+            gallery_list._ids_chache.clear()
+
+        conn.execute("BEGIN")
+        try:
+            cursor = conn.execute("SELECT * FROM series ORDER BY series_id")
+            for gallery_row in rows(cursor):
+                gallery = Gallery()
+                gallery.id = gallery_row['series_id']
+                gallery_map(gallery_row, gallery, False, False, False)
+                gallery_by_id[gallery.id] = gallery
+                galleries.append(gallery)
+
+            cursor = conn.execute(
+                "SELECT * FROM chapters ORDER BY series_id, chapter_number")
+            for chapter_row in rows(cursor):
+                gallery = gallery_by_id.get(chapter_row['series_id'])
+                if not gallery:
+                    continue
+                chapter = gallery.chapters.create_chapter(
+                    chapter_row['chapter_number'])
+                chapter_map(chapter_row, chapter)
+
+            cursor = conn.execute(
+                "SELECT series_id, list_id FROM series_list_map "
+                "ORDER BY series_id, list_id")
+            for mapping_row in rows(cursor):
+                gallery = gallery_by_id.get(mapping_row['series_id'])
+                gallery_list = list_by_id.get(mapping_row['list_id'])
+                if gallery and gallery_list:
+                    gallery_list.add_gallery(
+                        gallery, False, _check_filter=False)
+
+            cursor = conn.execute("""
+                SELECT stm.series_id, stm.tags_mappings_id,
+                       n.namespace, t.tag
+                FROM series_tags_map AS stm
+                JOIN tags_mappings AS tm
+                  ON tm.tags_mappings_id = stm.tags_mappings_id
+                JOIN namespaces AS n
+                  ON n.namespace_id = tm.namespace_id
+                JOIN tags AS t
+                  ON t.tag_id = tm.tag_id
+                ORDER BY stm.series_id, stm.tags_mappings_id
+            """)
+            for tag_row in rows(cursor):
+                namespace = sys.intern(tag_row['namespace'])
+                tag = sys.intern(tag_row['tag'])
+                gallery_tags = tags_by_gallery.setdefault(
+                    tag_row['series_id'], {})
+                gallery_tags.setdefault(namespace, []).append(tag)
+                namespace_tags.setdefault(namespace, set()).add(tag)
+
+            cursor = conn.execute(
+                "SELECT series_id, hash FROM hashes "
+                "ORDER BY series_id, hash_id")
+            for hash_row in rows(cursor):
+                hashes_by_gallery.setdefault(
+                    hash_row['series_id'], []).append(hash_row['hash'])
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+        namespace_tags = {
+            namespace: sorted(tag_values)
+            for namespace, tag_values in namespace_tags.items()
+        }
+        return galleries, tags_by_gallery, hashes_by_gallery, namespace_tags
+
+    def _validate_paths(self, galleries):
+        if not galleries or self._cancel_event.is_set():
+            return
+
+        workers = min(32, max(4, (os.cpu_count() or 2) * 2))
+        status_batch = []
+
+        def validate(gallery):
+            gallery_path = gallery.path
+            try:
+                return gallery.id, gallery_path, not os.path.exists(gallery_path)
+            except (OSError, TypeError, ValueError):
+                return gallery.id, gallery_path, True
+
+        executor = ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="Gallery path check")
+        futures = [executor.submit(validate, gallery) for gallery in galleries]
+        try:
+            for future in as_completed(futures):
+                if self._cancel_event.is_set():
+                    break
+                status_batch.append(future.result())
+                if len(status_batch) >= 256:
+                    self.PATH_STATUS_BATCH.emit(status_batch)
+                    status_batch = []
+            if status_batch and not self._cancel_event.is_set():
+                self.PATH_STATUS_BATCH.emit(status_batch)
+        finally:
+            if self._cancel_event.is_set():
+                for future in futures:
+                    future.cancel()
+            executor.shutdown(
+                wait=False, cancel_futures=self._cancel_event.is_set())
 
 
 if __name__ == '__main__':

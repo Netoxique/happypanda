@@ -199,7 +199,9 @@ class TagsTreeView(QTreeWidget):
         self.setSelectionBehavior(self.SelectItems)
         self.setSelectionMode(self.ExtendedSelection)
         self.clipboard = QApplication.clipboard()
+        self._namespace_tags = {}
         self.itemDoubleClicked.connect(lambda i: self.search_tags([i]) if i.parent() else None)
+        self.itemExpanded.connect(self._populate_namespace)
 
     def _convert_to_str(self, items):
         tags = {}
@@ -281,20 +283,36 @@ class TagsTreeView(QTreeWidget):
         else:
             event.ignore()
 
-    def setup_tags(self):
+    def _populate_namespace(self, namespace_item):
+        if namespace_item.data(0, Qt.UserRole + 1):
+            return
+        namespace = namespace_item.data(0, Qt.UserRole)
+        namespace_item.takeChildren()
+        for tag in self._namespace_tags.get(namespace, ()):
+            child_item = QTreeWidgetItem(namespace_item)
+            child_item.setText(0, tag)
+        namespace_item.setData(0, Qt.UserRole + 1, True)
+
+    def setup_tags(self, tags=None):
         self.clear()
-        tags = gallerydb.execute(gallerydb.TagDB.get_ns_tags, False)
-        items = []
-        for ns in tags:
+        if tags is None:
+            tags = gallerydb.execute(gallerydb.TagDB.get_ns_tags, False)
+        self._namespace_tags = {
+            namespace: tuple(sorted(tag_values))
+            for namespace, tag_values in tags.items()
+        }
+        self.setUpdatesEnabled(False)
+        for ns in sorted(self._namespace_tags):
             top_item = QTreeWidgetItem(self)
+            top_item.setData(0, Qt.UserRole, ns)
+            top_item.setData(0, Qt.UserRole + 1, False)
             if ns == 'default':
                 top_item.setText(0, 'No namespace')
             else:
                 top_item.setText(0, ns)
-            for tag in tags[ns]:
-                child_item = QTreeWidgetItem(top_item)
-                child_item.setText(0, tag)
+            QTreeWidgetItem(top_item)
         self.sortItems(0, Qt.AscendingOrder)
+        self.setUpdatesEnabled(True)
 
 class GalleryListEdit(misc.BasePopup):
     apply = pyqtSignal()

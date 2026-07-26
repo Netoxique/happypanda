@@ -81,9 +81,16 @@ class AppWindow(QMainWindow):
         self._db_startup_thread = QThread(self)
         self._db_startup_thread.finished.connect(self._db_startup_thread.deleteLater)
         self.db_startup = gallerydb.DatabaseStartup()
+        self._startup_galleries_by_id = {}
+        self.db_startup.START.connect(self._begin_startup_load)
+        self.db_startup.GALLERY_BATCH.connect(self._insert_startup_galleries)
+        self.db_startup.BASE_READY.connect(self._mark_startup_base_ready)
+        self.db_startup.METADATA_BATCH.connect(self._attach_startup_metadata)
+        self.db_startup.PATH_STATUS_BATCH.connect(self._apply_path_status)
+        self.db_startup.FAILED.connect(self._startup_failed)
         self._db_startup_thread.start()
         self.db_startup.moveToThread(self._db_startup_thread)
-        self.db_startup.DONE.connect(lambda: self.scan_for_new_galleries() if app_constants.LOOK_NEW_GALLERY_STARTUP else None)
+        self.db_startup.DONE.connect(self._start_auto_scan)
         self.db_startup_invoker.connect(self.db_startup.startup)
         self.setAcceptDrops(True)
         self.initUI()
@@ -92,6 +99,75 @@ class AppWindow(QMainWindow):
         self.setFocusPolicy(Qt.NoFocus)
         self.set_shortcuts()
         self.graphics_blur.setParent(self)
+
+    def _begin_startup_load(self):
+        self._startup_galleries_by_id.clear()
+        for manga_view in gallery.MangaViews.manga_views:
+            model = manga_view.gallery_model
+            model.beginResetModel()
+            model._data.clear()
+            model._gallery_to_add.clear()
+            model._data_count = 0
+            model.endResetModel()
+            manga_view.sort_model.begin_startup_load()
+
+    def _start_auto_scan(self):
+        if app_constants.LOOK_NEW_GALLERY_STARTUP:
+            self.scan_for_new_galleries()
+
+    def _insert_startup_galleries(self, view_type, galleries):
+        manga_view = next(
+            (view for view in gallery.MangaViews.manga_views
+             if int(view.view_type) == view_type),
+            None)
+        if not manga_view or not galleries:
+            return
+
+        self._startup_galleries_by_id.update(
+            (gallery_object.id, gallery_object)
+            for gallery_object in galleries)
+        model = manga_view.gallery_model
+        model._gallery_to_add.extend(galleries)
+        model.insertRows(model.rowCount(), len(galleries))
+
+    def _attach_startup_metadata(self, metadata):
+        for gallery_id, tags, hashes in metadata:
+            gallery_object = self._startup_galleries_by_id.get(gallery_id)
+            if gallery_object:
+                gallery_object.tags = tags
+                gallery_object.hashes = hashes
+
+    def _mark_startup_base_ready(self):
+        for manga_view in gallery.MangaViews.manga_views:
+            manga_view.list_view.manga_delegate._increment_paint_level()
+
+    def _apply_path_status(self, statuses):
+        for gallery_id, checked_path, dead_link in statuses:
+            gallery_object = self._startup_galleries_by_id.get(gallery_id)
+            if gallery_object and gallery_object.path == checked_path:
+                gallery_object.dead_link = dead_link
+
+    def _finish_startup_load(self):
+        for manga_view in gallery.MangaViews.manga_views:
+            manga_view.list_view.manga_delegate._increment_paint_level()
+            model = manga_view.gallery_model
+            if model.rowCount():
+                model.dataChanged.emit(
+                    model.index(0, 0),
+                    model.index(model.rowCount() - 1, model.columnCount() - 1),
+                    [Qt.DisplayRole])
+            manga_view.sort_model.end_startup_load()
+
+    def _startup_failed(self, stage, message):
+        for manga_view in gallery.MangaViews.manga_views:
+            manga_view.sort_model.end_startup_load()
+        try:
+            self.data_fetch_spinner.before_hide()
+            self.notification_bar.add_text(
+                "Library startup failed during {}: {}".format(stage, message))
+        except AttributeError:
+            pass
+        log_e("Library startup failed during %s: %s", stage, message)
 
     def set_shortcuts(self):
         quit = QShortcut(QKeySequence('Ctrl+Q'), self, self.close)
@@ -206,9 +282,7 @@ class AppWindow(QMainWindow):
         self.manga_views = {}
         self._current_manga_view = None
         self.default_manga_view = gallery.MangaViews(app_constants.ViewType.Default, self, True)
-        def refresh_view():
-            self.current_manga_view.sort_model.refresh()
-        self.db_startup.DONE.connect(refresh_view)
+        self.db_startup.DONE.connect(self._finish_startup_load)
         self.manga_list_view = self.default_manga_view.list_view
         self.manga_table_view = self.default_manga_view.table_view
         self.manga_list_view.gallery_model.STATUSBAR_MSG.connect(self.stat_temp_msg)
@@ -216,7 +290,8 @@ class AppWindow(QMainWindow):
         self.manga_table_view.STATUS_BAR_MSG.connect(self.stat_temp_msg)
 
         self.sidebar_list = misc_db.SideBarWidget(self)
-        self.db_startup.DONE.connect(self.sidebar_list.tags_tree.setup_tags)
+        self.db_startup.TAGS_READY.connect(
+            self.sidebar_list.tags_tree.setup_tags)
         self._main_layout.addWidget(self.sidebar_list)
         self.current_manga_view = self.default_manga_view
 
@@ -457,6 +532,7 @@ class AppWindow(QMainWindow):
         self.db_startup.START.connect(self.data_fetch_spinner.show)
         self.db_startup.PROGRESS.connect(self.data_fetch_spinner.set_text)
         self.manga_list_view.gallery_model.ADDED_ROWS.connect(self.data_fetch_spinner.before_hide)
+        self.db_startup.BASE_READY.connect(self.data_fetch_spinner.before_hide)
         self.db_startup.DONE.connect(self.data_fetch_spinner.before_hide)
 
         ## deleting spinner
@@ -1062,6 +1138,7 @@ class AppWindow(QMainWindow):
         return super().showEvent(event)
 
     def cleanup_exit(self):
+        self.db_startup.cancel()
         self.system_tray.hide()
         # watchers
         try:
