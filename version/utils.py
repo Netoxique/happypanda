@@ -55,6 +55,26 @@ if not app_constants.unrar_tool_path:
     FILE_FILTER = '*.zip *.cbz'
     ARCHIVE_FILES = ('.zip', '.cbz')
 
+
+def normalize_gallery_category(category):
+    """Return the canonical HappyPanda spelling for a gallery category."""
+    if not category:
+        return ''
+
+    normalized = str(category).strip().casefold()
+    aliases = {
+        'misc': 'Miscellaneous',
+        'other': 'Miscellaneous',
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+
+    for canonical in app_constants.VALID_GALLERY_CATEGORY:
+        if canonical.casefold() == normalized:
+            return canonical
+    return str(category).strip()
+
+
 class GMetafile:
     def __init__(self, path=None, archive=''):
         self.metadata = {
@@ -72,11 +92,16 @@ class GMetafile:
         if path is None:
             return
         if archive:
-            zip = ArchiveFile(archive)
-            c = zip.dir_contents(path)
-            for x in c:
-                if x.endswith(app_constants.GALLERY_METAFILE_KEYWORDS):
-                    self.files.append(open(zip.extract(x), encoding='utf-8'))
+            archive_file = ArchiveFile(archive)
+            try:
+                contents = archive_file.dir_contents(path)
+                for name in contents:
+                    if name.endswith(app_constants.GALLERY_METAFILE_KEYWORDS):
+                        extracted_path = archive_file.extract(name)
+                        self.files.append(open(
+                            extracted_path, encoding='utf-8'))
+            finally:
+                archive_file.close()
         else:
             for p in os.scandir(path):
                 if p.name in app_constants.GALLERY_METAFILE_KEYWORDS:
@@ -89,29 +114,75 @@ class GMetafile:
     def _eze(self, fp):
         if not fp.name.endswith('.json'):
             return
-        j = json.load(fp, encoding='utf-8')
-        eze = ['gallery_info', 'image_api_key', 'image_info']
-        # eze
-        if all(x in j for x in eze):
-            log_i('Detected metafile: eze')
-            ezedata = j['gallery_info']
-            t_parser = title_parser(ezedata['title'])
-            self.metadata['title'] = t_parser['title']
-            self.metadata['type'] = ezedata['category']
-            for ns in ezedata['tags']:
-                self.metadata['tags'][ns.capitalize()] = ezedata['tags'][ns]
-            self.metadata['tags']['default'] = self.metadata['tags'].pop('Misc', [])
-            self.metadata['artist'] = self.metadata['tags']['Artist'][0].capitalize()\
-                if 'Artist' in self.metadata['tags'] else t_parser['artist']
-            self.metadata['language'] = ezedata['language']
-            d = ezedata['upload_date']
-            # should be zero padded
-            d[1] = int("0" + str(d[1])) if len(str(d[1])) == 1 else d[1]
-            d[3] = int("0" + str(d[1])) if len(str(d[1])) == 1 else d[1] 
-            self.metadata['pub_date'] = datetime.datetime.strptime("{} {} {}".format(d[0], d[1], d[3]), "%Y %m %d")
-            l = ezedata['source']
-            self.metadata['link'] = 'http://' + l['site'] + '.org/g/' + str(l['gid']) + '/' + l['token']
-            return True
+        data = json.load(fp)
+        ezedata = data.get('gallery_info') if isinstance(data, dict) else None
+        if not isinstance(ezedata, dict):
+            return
+
+        log_i('Detected metafile: eze')
+        title = ezedata.get('title') or ezedata.get('title_original') or ''
+        parsed_title = title_parser(title) if title else {
+            'title': '', 'artist': '', 'language': ''}
+        self.metadata['title'] = parsed_title['title']
+        self.metadata['type'] = normalize_gallery_category(
+            ezedata.get('category'))
+
+        tags = ezedata.get('tags', {})
+        if isinstance(tags, dict):
+            for namespace, values in tags.items():
+                namespace = str(namespace)
+                normalized_namespace = (
+                    'default' if namespace.casefold() in ('default', 'misc')
+                    else namespace.capitalize())
+                if isinstance(values, str):
+                    values = [values]
+                if isinstance(values, (list, tuple)):
+                    self.metadata['tags'][normalized_namespace] = [
+                        str(value) for value in values if value is not None]
+
+        artist_tags = self.metadata['tags'].get('Artist', [])
+        self.metadata['artist'] = (
+            artist_tags[0].capitalize() if artist_tags
+            else parsed_title['artist'])
+
+        language = ezedata.get('language') or parsed_title['language']
+        if not language:
+            language = next((
+                value for value in self.metadata['tags'].get('Language', [])
+                if value.casefold() != 'translated'), '')
+        self.metadata['language'] = (
+            str(language).capitalize() if language else '')
+
+        if ezedata.get('translated'):
+            language_tags = self.metadata['tags'].setdefault('Language', [])
+            if not any(tag.casefold() == 'translated'
+                       for tag in language_tags):
+                language_tags.append('translated')
+
+        upload_date = ezedata.get('upload_date')
+        if isinstance(upload_date, (list, tuple)) and len(upload_date) >= 3:
+            try:
+                date_parts = [int(value) for value in upload_date[:6]]
+                self.metadata['pub_date'] = datetime.datetime(*date_parts)
+            except (TypeError, ValueError):
+                log_w('Invalid upload date in metafile: {}'.format(
+                    upload_date))
+
+        source = ezedata.get('source', {})
+        if isinstance(source, dict):
+            source_hosts = {
+                'e-hentai': 'e-hentai.org',
+                'ehentai': 'e-hentai.org',
+                'exhentai': 'exhentai.org',
+            }
+            hostname = source_hosts.get(
+                str(source.get('site', '')).strip().casefold())
+            gallery_id = source.get('gid')
+            token = source.get('token')
+            if hostname and gallery_id is not None and token:
+                self.metadata['link'] = 'https://{}/g/{}/{}'.format(
+                    hostname, gallery_id, token)
+        return True
 
     def _hdoujindler(self, fp):
         "HDoujin Downloader"

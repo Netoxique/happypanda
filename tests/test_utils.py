@@ -1,4 +1,6 @@
 """test utils module."""
+import datetime
+import json
 import zipfile
 from types import SimpleNamespace
 from unittest import mock
@@ -7,9 +9,11 @@ from itertools import product
 import pytest
 
 from version.utils import (
+    GMetafile,
     backup_database,
     check_archive,
     make_chapters,
+    normalize_gallery_category,
     recursive_gallery_check,
 )
 
@@ -24,6 +28,88 @@ class Chapters:
         chapter = SimpleNamespace(path='', title='', pages=0, in_archive=0)
         self.items.append(chapter)
         return chapter
+
+
+SAMPLE_INFO = {
+    'gallery_info': {
+        'title': (
+            '[Gyuunyuuya-san (Gyuunyuu Nomio)] Koisuru Randoseru | '
+            'Randoseru in Love [English]'),
+        'title_original': 'Original title',
+        'category': 'non-h',
+        'tags': {
+            'language': ['english', 'translated'],
+            'group': ['gyuunyuuya-san'],
+            'artist': ['osanai nii | gyuunyuu nomio'],
+            'female': ['lolicon'],
+            'other': ['rough translation'],
+        },
+        'language': 'English',
+        'translated': True,
+        'favorite_category': None,
+        'upload_date': [2024, 8, 14, 19, 33, 0],
+        'source': {
+            'site': 'exhentai',
+            'gid': 3022948,
+            'token': '20bc2c7068',
+            'parent_gallery': None,
+            'newer_versions': [],
+        },
+    },
+}
+
+
+def assert_sample_metadata(metadata):
+    assert metadata.title == 'Koisuru Randoseru | Randoseru in Love'
+    assert metadata.artist == 'Osanai nii | gyuunyuu nomio'
+    assert metadata.type == 'Non-H'
+    assert metadata.language == 'English'
+    assert metadata.pub_date == datetime.datetime(2024, 8, 14, 19, 33)
+    assert metadata.link == (
+        'https://exhentai.org/g/3022948/20bc2c7068')
+    assert metadata.tags['Language'] == ['english', 'translated']
+    assert metadata.tags['Group'] == ['gyuunyuuya-san']
+
+
+def test_minimal_eze_info_json_is_applied(tmp_path):
+    gallery_path = tmp_path / 'gallery'
+    gallery_path.mkdir()
+    (gallery_path / 'info.json').write_text(
+        json.dumps(SAMPLE_INFO), encoding='utf-8')
+    gallery = SimpleNamespace(
+        title='', artist='', type='', tags={}, language='',
+        pub_date=None, link='', info='')
+
+    GMetafile(str(gallery_path)).apply_gallery(gallery)
+
+    assert_sample_metadata(gallery)
+
+
+def test_minimal_eze_info_json_is_applied_from_archive(
+        tmp_path, monkeypatch):
+    archive_path = tmp_path / 'gallery.zip'
+    with zipfile.ZipFile(archive_path, 'w') as archive:
+        archive.writestr('info.json', json.dumps(SAMPLE_INFO))
+        archive.writestr('001.jpg', b'image')
+    extraction_path = tmp_path / 'extract'
+    extraction_path.mkdir()
+    monkeypatch.setattr(
+        'version.utils.app_constants.temp_dir', str(extraction_path))
+    gallery = SimpleNamespace(
+        title='', artist='', type='', tags={}, language='',
+        pub_date=None, link='', info='')
+
+    GMetafile('', str(archive_path)).apply_gallery(gallery)
+
+    assert_sample_metadata(gallery)
+
+
+@pytest.mark.parametrize(
+    ('source_category', 'expected'),
+    [('image set', 'Image Set'), ('artist cg', 'Artist CG'),
+     ('non-h', 'Non-H'), ('misc', 'Miscellaneous')])
+def test_gallery_category_is_normalized(source_category, expected):
+    assert normalize_gallery_category(source_category) == expected
 
 
 def test_webp_gallery_directory_is_detected(tmpdir):

@@ -1351,7 +1351,8 @@ class EHen(CommenHen):
                     gallery['title'] = fix_titles(gallery['title'])
                     new_gallery['title'] = {'def':gallery['title']}
 
-                new_gallery['type'] = gallery['category']
+                new_gallery['type'] = utils.normalize_gallery_category(
+                    gallery['category'])
                 new_gallery['pub_date'] = datetime.fromtimestamp(int(gallery['posted']))
                 tags = {'default':[]}
                 for t in gallery['tags']:
