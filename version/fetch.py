@@ -406,14 +406,14 @@ class Fetch(QObject):
                 app_constants.GLOBAL_EHEN_LOCK = False
                 self.FINISHED.emit(True)
                 return
-            if not gallery.hash in found_url:
+            title_url_list = found_url.get(gallery.hash)
+            if not title_url_list:
                 self.error_galleries.append((gallery, "Could not find url for gallery"))
                 self.AUTO_METADATA_PROGRESS.emit("Could not find url for gallery: {}".format(gallery.title))
                 log_w('Could not find url for gallery: {}'.format(gallery.title.encode(errors='ignore')))
                 if x == len(galleries):
                     self.fetch_metadata(hen=hen)
                 continue
-            title_url_list = found_url[gallery.hash]
 
             if not len(title_url_list) > 1 or app_constants.ALWAYS_CHOOSE_FIRST_HIT:
                 title = title_url_list[0][0]

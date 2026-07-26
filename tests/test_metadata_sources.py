@@ -269,3 +269,19 @@ def test_discovered_url_is_reused_even_when_saved_links_are_disabled(
     fetcher._auto_metadata_process([gallery], source, 'ehen')
 
     assert calls[-1] == (gallery, True)
+
+
+def test_empty_search_result_is_reported_without_crashing():
+    gallery = SimpleNamespace(
+        title='Drug and Drop 4',
+        link='',
+        hashes=['gallery-hash'])
+    fetcher = fetch.Fetch()
+    fetcher.fetch_metadata = lambda gallery=None, hen=None, proc=False: None
+    source = SimpleNamespace(
+        search=lambda *_args, **_kwargs: {'gallery-hash': []})
+
+    fetcher._auto_metadata_process([gallery], source, 'ehen')
+
+    assert fetcher.error_galleries == [
+        (gallery, 'Could not find url for gallery')]

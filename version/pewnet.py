@@ -1561,6 +1561,8 @@ class EHen(CommenHen):
                         title = gallery.text
                         g_url = gallery.a.attrs['href']
                         found_galleries[h].append((title,g_url))
+                    if not found_galleries[h]:
+                        found_galleries.pop(h)
             except AttributeError:
                 # A repeated rate-limit or other error page has a body but no
                 # gallery result container. Do not report it as an empty hit,
