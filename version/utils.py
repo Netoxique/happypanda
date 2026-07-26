@@ -46,10 +46,10 @@ log_w = log.warning
 log_e = log.error
 log_c = log.critical
 
-IMG_FILES = ('.jpg','.bmp','.png','.gif', '.jpeg')
+IMG_FILES = ('.jpg', '.bmp', '.png', '.gif', '.jpeg', '.webp')
 ARCHIVE_FILES = ('.zip', '.cbz', '.rar', '.cbr')
 FILE_FILTER = '*.zip *.cbz *.rar *.cbr'
-IMG_FILTER = '*.jpg *.bmp *.png *.jpeg'
+IMG_FILTER = '*.jpg *.bmp *.png *.jpeg *.webp'
 rarfile.PATH_SEP = '/'
 rarfile.UNRAR_TOOL = app_constants.unrar_tool_path
 if not app_constants.unrar_tool_path:
@@ -627,6 +627,7 @@ def open_chapter(chapterpath, archive=None):
     if not is_archive:
         chapterpath = os.path.normpath(chapterpath)
     temp_p = archive if is_archive else chapterpath
+    source_is_archive = is_archive or chapterpath.lower().endswith(ARCHIVE_FILES)
 
     custom_args = app_constants.EXTERNAL_VIEWER_ARGS
     send_folder_t = '{$folder}'
@@ -654,10 +655,10 @@ def open_chapter(chapterpath, archive=None):
             app_constants.NOTIF_BAR.add_text('Extracting...')
             t_p = os.path.join('temp', str(uuid.uuid4()))
             os.mkdir(t_p)
-            if is_archive or chapterpath.endswith(ARCHIVE_FILES):
+            if source_is_archive:
                 if os.path.isdir(chapterpath):
                     t_p = chapterpath
-                elif chapterpath.endswith(ARCHIVE_FILES):
+                elif chapterpath.lower().endswith(ARCHIVE_FILES):
                     zip2 = ArchiveFile(chapterpath)
                     f_d = sorted(zip2.dir_list(True))
                     if f_d:
@@ -676,7 +677,7 @@ def open_chapter(chapterpath, archive=None):
                     if x.lower().endswith(IMG_FILES) and not x.startswith('.')][0]) # Find first page
                 filepath = os.path.abspath(filepath)
         else:
-            if is_archive or chapterpath.endswith(ARCHIVE_FILES):
+            if source_is_archive:
                 con = zip.dir_contents('')
                 f_img = [x for x in sorted(con) if x.lower().endswith(IMG_FILES) and not x.startswith('.')]
                 if not f_img:
@@ -689,9 +690,7 @@ def open_chapter(chapterpath, archive=None):
         return filepath
 
     try:
-        try: # folder
-            filepath = find_f_img_folder()
-        except NotADirectoryError: # archive
+        if source_is_archive:
             try:
                 if not app_constants.EXTRACT_CHAPTER_BEFORE_OPENING and app_constants.EXTERNAL_VIEWER_PATH:
                     filepath = find_f_img_archive(False)
@@ -701,6 +700,8 @@ def open_chapter(chapterpath, archive=None):
                 log.exception('Could not open chapter')
                 app_constants.NOTIF_BAR.add_text('Could not open chapter. Check happypanda.log for more details.')
                 return
+        else:
+            filepath = find_f_img_folder()
     except FileNotFoundError:
         log.exception('Could not find chapter {}'.format(chapterpath))
         app_constants.NOTIF_BAR.add_text("Chapter does no longer exist!")
@@ -855,7 +856,7 @@ def tag_to_dict(string, ns_capitalize=True):
 
         if x == ',': # if we meet a comma
             # we trim our buffer if we are at top level
-            if level is 0:
+            if level == 0:
                 # add to list
                 stripped_set.add(buffer.strip())
                 buffer = ""
@@ -1251,7 +1252,7 @@ def make_chapters(gallery_object):
     chap_container = gallery_object.chapters
     path = gallery_object.path
     metafile = GMetafile()
-    try:
+    if os.path.isdir(path):
         log_d('Listing dir...')
         con = scandir.scandir(path) # list all folders in gallery dir
         log_i('Gallery source is a directory')
@@ -1265,28 +1266,34 @@ def make_chapters(gallery_object):
                 chap.title = title_parser(ch)['title']
                 chap.path = os.path.join(path, ch)
                 metafile.update(GMetafile(chap.path))
-                chap.pages = len([x for x in scandir.scandir(chap.path) if x.name.endswith(IMG_FILES)])
+                chap.pages = len([x for x in scandir.scandir(chap.path)
+                    if x.name.lower().endswith(IMG_FILES)])
 
         else: #else assume that all images are in gallery folder
             chap = chap_container.create_chapter()
             chap.title = title_parser(os.path.split(path)[1])['title']
             chap.path = path
             metafile.update(GMetafile(path))
-            chap.pages = len([x for x in scandir.scandir(path) if x.name.endswith(IMG_FILES)])
+            chap.pages = len([x for x in scandir.scandir(path)
+                if x.name.lower().endswith(IMG_FILES)])
 
-    except NotADirectoryError:
-        if path.endswith(ARCHIVE_FILES):
-            gallery_object.is_archive = 1
-            log_i("Gallery source is an archive")
-            archive_g = sorted(check_archive(path))
+    elif path.lower().endswith(ARCHIVE_FILES):
+        gallery_object.is_archive = 1
+        log_i("Gallery source is an archive")
+        archive_g = sorted(check_archive(path))
+        arch = ArchiveFile(path)
+        try:
             for g in archive_g:
                 chap = chap_container.create_chapter()
                 chap.path = g
                 chap.in_archive = 1
                 metafile.update(GMetafile(g, path))
-                arch = ArchiveFile(path)
-                chap.pages = len(arch.dir_contents(g))
-                arch.close()
+                chap.pages = len([x for x in arch.dir_contents(g)
+                    if x.lower().endswith(IMG_FILES)])
+        finally:
+            arch.close()
+    else:
+        raise ValueError("Unsupported gallery source: {}".format(path))
 
     metafile.apply_gallery(gallery_object)
 

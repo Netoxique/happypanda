@@ -1,10 +1,80 @@
 """test utils module."""
+import zipfile
+from types import SimpleNamespace
 from unittest import mock
 from itertools import product
 
 import pytest
 
-from version.utils import backup_database
+from version.utils import (
+    backup_database,
+    check_archive,
+    make_chapters,
+    recursive_gallery_check,
+)
+
+
+class Chapters:
+    """Minimal chapter container used to exercise gallery discovery."""
+
+    def __init__(self):
+        self.items = []
+
+    def create_chapter(self):
+        chapter = SimpleNamespace(path='', title='', pages=0, in_archive=0)
+        self.items.append(chapter)
+        return chapter
+
+
+def test_webp_gallery_directory_is_detected(tmpdir):
+    """A folder containing WebP pages is a valid gallery source."""
+    gallery_path = tmpdir.mkdir('webp-gallery')
+    gallery_path.join('001.webp').write_binary(b'webp')
+
+    gallery_dirs, gallery_archives = recursive_gallery_check(str(gallery_path))
+
+    assert gallery_dirs == [str(gallery_path)]
+    assert gallery_archives == []
+
+
+def test_webp_gallery_archive_is_detected(tmpdir):
+    """An archive containing WebP pages is a valid gallery source."""
+    archive_path = str(tmpdir.join('webp-gallery.cbz'))
+    with zipfile.ZipFile(archive_path, 'w') as archive:
+        archive.writestr('001.webp', b'webp')
+
+    assert check_archive(archive_path) == ['']
+
+
+def test_make_chapters_handles_webp_zip_on_windows(tmpdir):
+    """Archive chapter creation must not pass a ZIP path to scandir."""
+    archive_path = str(tmpdir.join('OH!みそしる.zip'))
+    with zipfile.ZipFile(archive_path, 'w') as archive:
+        for page in range(4):
+            archive.writestr('{:03}.webp'.format(page), b'webp')
+        archive.writestr('notes.txt', b'metadata')
+
+    gallery = SimpleNamespace(
+        path=archive_path,
+        chapters=Chapters(),
+        is_archive=0,
+        title='',
+        artist='',
+        type='',
+        tags={},
+        language='',
+        pub_date=None,
+        link='',
+        info='',
+    )
+
+    make_chapters(gallery)
+
+    assert gallery.is_archive == 1
+    assert len(gallery.chapters.items) == 1
+    assert gallery.chapters.items[0].path == ''
+    assert gallery.chapters.items[0].in_archive == 1
+    assert gallery.chapters.items[0].pages == 4
 
 
 @pytest.mark.parametrize(

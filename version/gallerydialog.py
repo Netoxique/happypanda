@@ -1,4 +1,4 @@
-import queue, os, threading, random, logging, time, scandir
+import queue, os, random, logging, time, scandir
 from datetime import datetime
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QDesktopWidget, QGroupBox,
@@ -414,11 +414,11 @@ class GalleryDialog(QWidget):
 
     def check(self):
         if not self._multiple_galleries:
-            if len(self.title_edit.text()) is 0:
+            if len(self.title_edit.text()) == 0:
                 self.title_edit.setFocus()
                 self.title_edit.setStyleSheet("border-style:outset;border-width:2px;border-color:red;")
                 return False
-            elif len(self.author_edit.text()) is 0:
+            elif len(self.author_edit.text()) == 0:
                 self.author_edit.setText("Unknown")
 
             if len(self.path_lbl.text()) == 0 or self.path_lbl.text() == 'No path specified':
@@ -550,9 +550,17 @@ class GalleryDialog(QWidget):
             if new:
                 if not new_gallery.chapters:
                     log_d('Starting chapters')
-                    thread = threading.Thread(target=utils.make_chapters, args=(new_gallery,))
-                    thread.start()
-                    thread.join()
+                    try:
+                        utils.make_chapters(new_gallery)
+                        if not new_gallery.chapters:
+                            raise ValueError('No gallery chapters found')
+                    except Exception:
+                        log.exception('Failed to create gallery chapters')
+                        self.file_exists_lbl.setText(
+                            '<font color="red">Invalid gallery source.</font>')
+                        self.file_exists_lbl.show()
+                        self.done.hide()
+                        return None
                     log_d('Finished chapters')
                     if new and app_constants.MOVE_IMPORTED_GALLERIES:
                         app_constants.OVERRIDE_MONITOR = True

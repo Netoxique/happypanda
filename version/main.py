@@ -190,7 +190,7 @@ def start(test=False):
         d_style = app_constants.default_stylesheet_path
         u_style =  app_constants.user_stylesheet_path
 
-        if len(u_style) is not 0:
+        if len(u_style) != 0:
             try:
                 style_file = QFile(u_style)
                 log_i('Select userstyle: OK')
