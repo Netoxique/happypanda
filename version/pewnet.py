@@ -1130,9 +1130,11 @@ class NHen(CommenHen):
 
 class EHen(CommenHen):
     "Fetches galleries from ehen"
+    API_URL = "https://api.e-hentai.org/api.php"
+
     def __init__(self, cookies = None):
         self.cookies = cookies if cookies else settings.ExProperties().cookies
-        self.e_url = "https://e-hentai.org/api.php"
+        self.e_url = self.API_URL
         self.e_url_o = "https://e-hentai.org/"
 
 
@@ -1206,11 +1208,17 @@ class EHen(CommenHen):
         return g
 
     @classmethod
+    def has_exhentai_credentials(cls, cookies):
+        """Return whether the cookie jar contains an ExHentai login."""
+        return bool(cookies and cookies.get('ipb_member_id') and
+                    cookies.get('ipb_pass_hash'))
+
+    @classmethod
     def check_login(cls, cookies):
         """
         Checks if user is logged in
         """
-        if cookies.get('ipb_member_id') and cookies.get('ipb_pass_hash'):
+        if cls.has_exhentai_credentials(cookies):
             # check if there is access to ex
             ex = settings.ExProperties()
             if ex.custom: # this is to avoid spamming ex with requests
@@ -1515,7 +1523,6 @@ class ExHen(EHen):
     "Fetches gallery metadata from exhen"
     def __init__(self, cookies=None):
         super().__init__(cookies)
-        self.e_url = "https://exhentai.org/api.php"
         self.e_url_o = "https://exhentai.org/"
 
     def get_metadata(self, list_of_urls):

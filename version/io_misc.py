@@ -421,7 +421,7 @@ class GalleryPopup(misc.BasePopup):
         main_layout.addWidget(scroll_area, 3)
         for g in galleries:
             gall_w = misc.GalleryShowcaseWidget(parent=self, menu=menu())
-            gall_w.set_gallery(g, (170//1.40, 170))
+            gall_w.set_gallery(g, (int(170 // 1.40), 170))
             gall_w.double_clicked.connect(self.gallery_doubleclicked.emit)
             self.gallery_layout.addWidget(gall_w)
 

@@ -14,6 +14,7 @@
 
 import os, time, logging, uuid, random, queue
 import re as regex
+from urllib.parse import urlparse
 
 from PyQt5.QtCore import QObject, pyqtSignal # need this for interaction with main thread
 
@@ -308,10 +309,15 @@ class Fetch(QObject):
             return None
         # We received something from get_metadata
         if not metadata: # metadata fetching failed
-            if gallery:
-                self.error_galleries.append((gallery, "No metadata found for gallery"))
+            failed_galleries = list(self.galleries_in_queue)
+            self.galleries_in_queue.clear()
+            for failed_gallery in failed_galleries:
+                if not any(g is failed_gallery
+                           for g, _error in self.error_galleries):
+                    self.error_galleries.append(
+                        (failed_gallery, "No metadata found for gallery"))
                 log_i("An error occured while fetching metadata with gallery: {}".format(
-                    gallery.title.encode(errors='ignore')))
+                    failed_gallery.title.encode(errors='ignore')))
             return None
         self.AUTO_METADATA_PROGRESS.emit("Applying metadata...")
 
@@ -476,15 +482,51 @@ class Fetch(QObject):
         log_i("Checking if valid URL: {}".format(url))
         if not url:
             return None
-        if 'g.e-hentai.org/g/' in url:
+
+        parsed_url = urlparse(
+            url if '://' in url else 'https://{}'.format(url))
+        hostname = (parsed_url.hostname or '').lower()
+        path = parsed_url.path.lower()
+
+        if hostname in ('e-hentai.org', 'www.e-hentai.org',
+                        'g.e-hentai.org') and path.startswith('/g/'):
             return 'ehen'
-        elif 'exhentai.org/g/' in url:
+        elif hostname in ('exhentai.org', 'www.exhentai.org') and \
+                path.startswith('/g/'):
             return 'exhen'
-        elif 'panda.chaika.moe/archive/' in url or 'panda.chaika.moe/gallery/' in url:
+        elif hostname == 'panda.chaika.moe' and \
+                (path.startswith('/archive/') or path.startswith('/gallery/')):
             return 'chaikahen'
         else:
             log_e('Invalid URL')
             return None
+
+    @staticmethod
+    def _ehen_sources(default_url, cookies):
+        """Return each accessible E-Hentai backend in preferred order."""
+        ehen = (pewnet.EHen(), 'ehen')
+        exhen = None
+        if pewnet.EHen.has_exhentai_credentials(cookies):
+            exhen = (pewnet.ExHen(cookies), 'exhen')
+
+        if 'exhentai' in default_url and exhen:
+            return [exhen, ehen]
+
+        sources = [ehen]
+        if exhen:
+            sources.append(exhen)
+        return sources
+
+    def _retry_metadata_source(self, hen, valid_url):
+        galleries = [gallery for gallery, _error in self.error_galleries]
+        self.error_galleries.clear()
+        source_name = ('ExHentai' if valid_url == 'exhen'
+                       else 'E-Hentai' if valid_url == 'ehen'
+                       else valid_url)
+        log_i("Using {} metadata source".format(source_name))
+        self.AUTO_METADATA_PROGRESS.emit(
+            "Using {} metadata source".format(source_name))
+        self._auto_metadata_process(galleries, hen, valid_url)
 
     def auto_web_metadata(self):
         """
@@ -507,28 +549,26 @@ class Fetch(QObject):
                 app_constants.GLOBAL_EHEN_LOCK = False
                 self.FINISHED.emit(False)
 
-            if 'exhentai' in self._default_ehen_url:
-                try:
-                    exprops = settings.ExProperties()
-                    hen = pewnet.ExHen(exprops.cookies)
-                    if hen.check_login(exprops.cookies):
-                        valid_url = 'exhen'
-                        log_i("using exhen")
-                    else:
-                        raise ValueError
-                except ValueError:
-                    hen = pewnet.EHen()
-                    valid_url = 'ehen'
-                    log_i("using ehen")
-            else:
-                hen = pewnet.EHen()
-                valid_url = 'ehen'
-                log_i("Using Exhentai")
+            exprops = settings.ExProperties()
+            ehen_sources = self._ehen_sources(
+                self._default_ehen_url, exprops.cookies)
+            hen, valid_url = ehen_sources[0]
+            source_name = 'ExHentai' if valid_url == 'exhen' else 'E-Hentai'
+            log_i("Using {} metadata source".format(source_name))
             try:
                 self._auto_metadata_process(self.galleries, hen, valid_url, color=True)
             except app_constants.MetadataFetchFail as err:
                 fetch_cancelled(err)
                 return
+
+            for hen, valid_url in ehen_sources[1:]:
+                if not self.error_galleries:
+                    break
+                try:
+                    self._retry_metadata_source(hen, valid_url)
+                except app_constants.MetadataFetchFail as err:
+                    fetch_cancelled(err)
+                    return
 
             if self.error_galleries:
                 if self._hen_list:

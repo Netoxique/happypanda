@@ -1784,7 +1784,7 @@ class SingleGalleryChoices(BasePopup):
         main_layout = QVBoxLayout()
         self.main_widget.setLayout(main_layout)
         g_showcase = GalleryShowcaseWidget()
-        g_showcase.set_gallery(gallery, (170 // 1.40, 170))
+        g_showcase.set_gallery(gallery, (int(170 // 1.40), 170))
         if text:
             t_layout = QHBoxLayout()
             main_layout.addLayout(t_layout)
