@@ -12,6 +12,13 @@ Follow twiddly on Twitter to keep up to date with HPX:
 
 ## Changes over the original
 
+- Added WebP image support.
+- Added a portable Windows x64 build based on CPython 3.11 and cx_Freeze.
+- Improved startup and gallery loading performance.
+- Modernized E-Hentai and ExHentai metadata fetching with batching and safer error handling.
+- Added configurable thumbnail ribbons, type colors, and labels.
+- Fixed sidebar, notification, and fractional-label display issues.
+
 ## Features
 
 - Portable, self-contained in a folder, and cross-platform
