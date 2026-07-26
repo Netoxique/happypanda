@@ -986,7 +986,9 @@ class GridDelegate(QStyledItemDelegate):
                 painter.translate(x, y + app_constants.THUMB_H_SIZE)
                 box_color = QBrush(QColor(label_color))#QColor(0,0,0,123))
                 painter.setBrush(box_color)
-                rect = QRect(0, 0, w, lbl_h) #x, y, width, height
+                # QTextLayout reports floating-point bounds, while QRect's
+                # dimensions must be integers. Round up to avoid clipping text.
+                rect = QRect(0, 0, w, math.ceil(lbl_h)) #x, y, width, height
                 painter.fillRect(rect, box_color)
                 painter.restore()
                 return rect
