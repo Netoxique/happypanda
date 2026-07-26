@@ -6,6 +6,7 @@
 .build-cache/
 .python-build/
 .venv-build/
+.venv-dev/
 *.egg-info/
 *.pyproj
 *Qt*
