@@ -21,9 +21,8 @@ Follow twiddly on Twitter to keep up to date with HPX:
   fallback, and safer error handling.
 - Added compatibility with current Eze JSON metadata.
 - Improved gallery scanning and page counts by filtering non-image files.
-- Added configurable gallery type colors with label, ribbon, and off modes;
-  labels are the default.
-- Added Date Modified sorting and automatic refresh for modified gallery sources (This will open a database update prompt if you're updating).
+- Added gallery color labels.
+- Added Date Modified sorting and automatic detection for modified gallery sources (This change will open a database update prompt if you're updating).
 
 ## Features
 
