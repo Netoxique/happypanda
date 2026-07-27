@@ -22,7 +22,9 @@ Follow twiddly on Twitter to keep up to date with HPX:
 - Added compatibility with current Eze JSON metadata.
 - Improved gallery scanning and page counts by filtering non-image files.
 - Added gallery color labels.
-- Added Date Modified sorting and automatic detection for modified gallery sources (This change will open a database update prompt if you're updating).
+- Added "Date Modified" sorting and automatic detection for modified gallery sources (This change will open a database update prompt if you're updating).
+- Improved duplicate detection system, search reduced from 10 minutes to less than 1 second.
+- Improve gallery name detection. 
 
 ## Features
 
