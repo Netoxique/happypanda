@@ -847,15 +847,44 @@ class GalleryModel(QAbstractTableModel):
         self.dataChanged.emit(index, index, [Qt.UserRole + 1, Qt.DecorationRole])
 
     def removeRows(self, position, rows, index=QModelIndex()):
-        self._data_count -= rows
+        if rows <= 0 or position < 0 or position + rows > len(self._data):
+            return False
+        galleries = list(self._data[position:position + rows])
+        self._gallery_to_remove[:] = galleries
         self.beginRemoveRows(QModelIndex(), position, position + rows - 1)
-        for r in range(rows):
-            try:
-                self._data.remove(self._gallery_to_remove.pop())
-            except ValueError:
-                return False
+        del self._data[position:position + rows]
         self.endRemoveRows()
+        self._gallery_to_remove.clear()
+        self._data_count = max(0, self._data_count - rows)
         return True
+
+    def remove_galleries(self, galleries):
+        """Remove arbitrary galleries with accurate contiguous row signals."""
+        gallery_identities = {id(gallery) for gallery in galleries}
+        positions = [
+            position for position, gallery in enumerate(self._data)
+            if id(gallery) in gallery_identities
+        ]
+        if not positions:
+            return 0
+
+        ranges = []
+        range_start = positions[0]
+        range_end = positions[0]
+        for position in positions[1:]:
+            if position == range_end + 1:
+                range_end = position
+            else:
+                ranges.append((range_start, range_end))
+                range_start = range_end = position
+        ranges.append((range_start, range_end))
+
+        removed = 0
+        for range_start, range_end in reversed(ranges):
+            count = range_end - range_start + 1
+            if self.removeRows(range_start, count):
+                removed += count
+        return removed
 
 def duplicate_match_label(reasons):
     if reasons == ('title', 'path'):
@@ -1776,14 +1805,116 @@ class CommonView:
                     gallery_db_list.append(gallery)
             gallerydb.execute(gallerydb.GalleryDB.del_gallery, True, gallery_db_list, local=local, priority=0)
 
-            rows = len(gallery_list)
-            view_cls.gallery_model._gallery_to_remove.extend(gallery_list)
-            view_cls.gallery_model.removeRows(view_cls.gallery_model.rowCount() - rows, rows)
-            view_cls.sort_model.refresh()
+            scroll_anchor = CommonView.capture_scroll_anchor(
+                view_cls, gallery_list)
+            view_cls.gallery_model.remove_galleries(gallery_list)
+            CommonView.restore_scroll_anchor(view_cls, scroll_anchor)
 
             #view_cls.STATUS_BAR_MSG.emit('Gallery removed!')
             #view_cls.setUpdatesEnabled(True)
         #view_cls.sort_model.setDynamicSortFilter(True)
+
+    @staticmethod
+    def capture_scroll_anchor(view_cls, galleries_to_remove):
+        """Capture a surviving visible gallery and its viewport offset."""
+        model = view_cls.sort_model
+        row_count = model.rowCount()
+        if not row_count:
+            return None
+
+        visible_indexes = []
+        if isinstance(view_cls, QListView):
+            visible_indexes = view_cls.get_visible_indexes()
+        elif isinstance(view_cls, QTableView):
+            first_row = view_cls.rowAt(0)
+            if first_row >= 0:
+                visible_indexes = [model.index(first_row, 0)]
+
+        if not visible_indexes:
+            fallback = view_cls.indexAt(QPoint(1, 1))
+            if fallback.isValid():
+                visible_indexes = [fallback.sibling(fallback.row(), 0)]
+        if not visible_indexes:
+            return {
+                'gallery': None,
+                'offset': 0,
+                'scroll_value': view_cls.verticalScrollBar().value(),
+            }
+
+        anchor_index = min(
+            visible_indexes,
+            key=lambda idx: (
+                view_cls.visualRect(idx).top(),
+                view_cls.visualRect(idx).left()))
+        anchor_row = anchor_index.row()
+        removed = {id(gallery) for gallery in galleries_to_remove}
+        candidate_rows = (
+            list(range(anchor_row, row_count)) +
+            list(range(anchor_row - 1, -1, -1)))
+        anchor_gallery = None
+        for row in candidate_rows:
+            gallery = model.index(row, 0).data(GalleryModel.GALLERY_ROLE)
+            if gallery is not None and id(gallery) not in removed:
+                anchor_gallery = gallery
+                break
+
+        return {
+            'gallery': anchor_gallery,
+            'offset': view_cls.visualRect(anchor_index).top(),
+            'scroll_value': view_cls.verticalScrollBar().value(),
+        }
+
+    @staticmethod
+    def restore_scroll_anchor(view_cls, anchor):
+        if anchor is None:
+            return
+
+        def restore():
+            previous_layout_mode = None
+            try:
+                # QListView lays large icon grids out in asynchronous batches.
+                # Force this removal's relayout to complete before calculating
+                # scroll geometry, then restore the normal batched mode.
+                if isinstance(view_cls, QListView):
+                    previous_layout_mode = view_cls.layoutMode()
+                    view_cls.setLayoutMode(QListView.SinglePass)
+                    view_cls.doItemsLayout()
+                else:
+                    view_cls.executeDelayedItemsLayout()
+                scroll_bar = view_cls.verticalScrollBar()
+                anchor_gallery = anchor['gallery']
+                if anchor_gallery is None:
+                    scroll_bar.setValue(anchor['scroll_value'])
+                    return
+
+                model = view_cls.sort_model
+                anchor_index = QModelIndex()
+                for row in range(model.rowCount()):
+                    index = model.index(row, 0)
+                    if index.data(GalleryModel.GALLERY_ROLE) is anchor_gallery:
+                        anchor_index = index
+                        break
+                if not anchor_index.isValid():
+                    scroll_bar.setValue(anchor['scroll_value'])
+                    return
+
+                view_cls.scrollTo(anchor_index, view_cls.PositionAtTop)
+                current_offset = view_cls.visualRect(anchor_index).top()
+                scroll_bar.setValue(
+                    scroll_bar.value() +
+                    current_offset -
+                    anchor['offset'])
+            except RuntimeError:
+                # The tab may have been closed before the queued restore.
+                return
+            finally:
+                if previous_layout_mode is not None:
+                    try:
+                        view_cls.setLayoutMode(previous_layout_mode)
+                    except RuntimeError:
+                        pass
+
+        QTimer.singleShot(0, restore)
 
     @staticmethod
     def find_index(view_cls, gallery_id, sort_model=False):
@@ -1951,8 +2082,7 @@ class MangaViews:
     def _delegate_delete(self):
         if self._delete_proxy_model:
             gs = [g for g in self.gallery_model._gallery_to_remove]
-            self._delete_proxy_model._gallery_to_remove = gs
-            self._delete_proxy_model.removeRows(self._delete_proxy_model.rowCount() - len(gs), len(gs))
+            self._delete_proxy_model.remove_galleries(gs)
 
     def set_delete_proxy(self, other_model):
         self._delete_proxy_model = other_model
