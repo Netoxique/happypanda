@@ -17,6 +17,7 @@ from version.utils import (
     make_chapters,
     normalize_gallery_category,
     recursive_gallery_check,
+    title_parser,
 )
 
 
@@ -59,6 +60,44 @@ SAMPLE_INFO = {
         },
     },
 }
+
+
+@pytest.mark.parametrize(
+    ('raw_title', 'expected'),
+    [
+        (
+            '[OrangeMaru (YD)] XX ROM (Fate/Grand Order) [English]',
+            'XX ROM (Fate/Grand Order)',
+        ),
+        (
+            '[Hikiwari Nattou] Boku no Inmon Illya-chan 5DL '
+            '(Fate／kaleid liner Prisma Illya) [Digital].zip',
+            'Boku no Inmon Illya-chan 5DL '
+            '(Fate／kaleid liner Prisma Illya)',
+        ),
+    ],
+)
+def test_title_parser_preserves_slashes_in_titles(raw_title, expected):
+    assert title_parser(raw_title)['title'] == expected
+
+
+def test_eze_metadata_title_preserves_ascii_slash(tmp_path):
+    gallery_path = tmp_path / 'gallery'
+    gallery_path.mkdir()
+    metadata = {
+        'gallery_info': {
+            'title': '[Circle] Story (Fate/Grand Order) [English]',
+        },
+    }
+    (gallery_path / 'info.json').write_text(
+        json.dumps(metadata), encoding='utf-8')
+    gallery = SimpleNamespace(
+        title='', artist='', type='', tags={}, language='',
+        pub_date=None, link='', info='')
+
+    GMetafile(str(gallery_path)).apply_gallery(gallery)
+
+    assert gallery.title == 'Story (Fate/Grand Order)'
 
 
 def test_windows_delete_path_normalization_uses_native_separators():

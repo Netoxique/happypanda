@@ -472,7 +472,8 @@ class GallerySourceUpdate(QObject):
                 chapter.path = self.gallery.path_in_archive
                 chapter.in_archive = 1
                 chapter.title = utils.title_parser(
-                    self.gallery.path_in_archive.replace('/', ''))['title']
+                    self.gallery.path_in_archive.rstrip(
+                        '/').rsplit('/', 1)[-1])['title']
                 archive = utils.ArchiveFile(self.gallery.path)
                 try:
                     chapter.pages = len([

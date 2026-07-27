@@ -105,7 +105,8 @@ class Fetch(QObject):
                     log_i('Gallery has {} chapters'.format(numb_of_chapters))
                     for ch in chapters:
                         chap = new_gallery.chapters.create_chapter()
-                        chap.title = utils.title_parser(ch)['title']
+                        chap.title = utils.title_parser(
+                            os.path.basename(ch))['title']
                         chap.path = os.path.join(path, ch)
                         chap.pages = len([x for x in os.scandir(chap.path) if x.name.endswith(utils.IMG_FILES)])
                         metafile.update(utils.GMetafile(chap.path))
@@ -126,11 +127,9 @@ class Fetch(QObject):
                         if contents:
                             new_gallery.is_archive = 1
                             new_gallery.path_in_archive = '' if not is_archive else path
-                            if folder_name.endswith('/'):
-                                folder_name = folder_name[:-1]
-                                fn = os.path.split(folder_name)
-                                folder_name = fn[1] or fn[2]
-                            folder_name = folder_name.replace('/','')
+                            if is_archive:
+                                folder_name = (
+                                    folder_name.rstrip('/').rsplit('/', 1)[-1])
                             if folder_name.endswith(utils.ARCHIVE_FILES):
                                 n = folder_name
                                 for ext in utils.ARCHIVE_FILES:
@@ -147,7 +146,11 @@ class Fetch(QObject):
                                 for g in archive_g:
                                     chap = new_gallery.chapters.create_chapter()
                                     chap.in_archive = 1
-                                    chap.title = parsed['title'] if not g else utils.title_parser(g.replace('/', ''))['title']
+                                    chap.title = (
+                                        parsed['title'] if not g else
+                                        utils.title_parser(
+                                            g.rstrip('/').rsplit('/', 1)[-1]
+                                        )['title'])
                                     chap.path = g
                                     metafile.update(utils.GMetafile(g, temp_p))
                                     arch = utils.ArchiveFile(temp_p)

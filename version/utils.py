@@ -1049,13 +1049,6 @@ def title_parser(title):
     "Receives a title to parse. Returns dict with 'title', 'artist' and language"
     log_d("Parsing title: {}".format(title))
     title = " ".join(title.split())
-    if '/' in title:
-        try:
-            title = os.path.split(title)[1]
-            if not title:
-                title = title
-        except IndexError:
-            pass
 
     for x in ARCHIVE_FILES:
         if title.endswith(x):
@@ -1391,7 +1384,7 @@ def make_chapters(gallery_object):
             log_d('Chapters divided in folders..')
             for ch in chapters:
                 chap = chap_container.create_chapter()
-                chap.title = title_parser(ch)['title']
+                chap.title = title_parser(os.path.basename(ch))['title']
                 chap.path = os.path.join(path, ch)
                 metafile.update(GMetafile(chap.path))
                 chap.pages = len([x for x in os.scandir(chap.path)
