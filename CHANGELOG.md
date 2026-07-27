@@ -1,5 +1,10 @@
 *Happypanda v1.2*
 - Added Date Modified sorting, table display, legacy recalculation, and monitored gallery replacement detection.
+- Improved duplicate detection from minutes to under a second and added color-coded duplicate groups.
+- Improved gallery search, filtering, thumbnail rendering, and archive opening performance.
+- Fixed title parsing for names containing slashes or slash-like characters, including Fate/Grand Order and Fate/kaleid titles.
+- Fixed a crash when dragging multiple galleries.
+- Fixed the welcome message appearing more than once per version.
 - Added WebP image support.
 - Added a reproducible portable Windows x64 build with bundled UnRAR.
 - Improved startup and gallery loading performance.
