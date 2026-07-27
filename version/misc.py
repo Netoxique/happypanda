@@ -488,91 +488,113 @@ class GalleryMetaWindow(ArrowWindow):
         if not self.underMouse() and not self._mouse_in_gallery():
             self.hide_animation.start()
 
+    @classmethod
+    def _popup_placement(cls, bounds, thumbnail_rect, popup_size,
+                         margin_offset=20, gallery_touch_offset=10):
+        """Return an inward-facing popup direction and global position."""
+        width = popup_size.width()
+        height = popup_size.height()
+        middle = thumbnail_rect.center()
+
+        candidates = {
+            'top': (
+                cls.BOTTOM,
+                QRect(
+                    middle.x() - width // 2,
+                    thumbnail_rect.top() - gallery_touch_offset - height,
+                    width,
+                    height)),
+            'bottom': (
+                cls.TOP,
+                QRect(
+                    middle.x() - width // 2,
+                    thumbnail_rect.bottom() + gallery_touch_offset,
+                    width,
+                    height)),
+            'left': (
+                cls.RIGHT,
+                QRect(
+                    thumbnail_rect.left() - gallery_touch_offset - width,
+                    middle.y() - height // 2,
+                    width,
+                    height)),
+            'right': (
+                cls.LEFT,
+                QRect(
+                    thumbnail_rect.right() + gallery_touch_offset,
+                    middle.y() - height // 2,
+                    width,
+                    height)),
+        }
+
+        # The nearest window edge determines which direction points inward.
+        # Vertical sides win ties, retaining "below" as the center default.
+        edge_priority = (
+            ('top', middle.y() - bounds.top(), 'bottom'),
+            ('bottom', bounds.bottom() - middle.y(), 'top'),
+            ('left', middle.x() - bounds.left(), 'right'),
+            ('right', bounds.right() - middle.x(), 'left'),
+        )
+        placements = [
+            candidates[placement]
+            for _edge, _distance, placement in sorted(
+                edge_priority, key=lambda item: item[1])
+        ]
+
+        available = bounds.adjusted(
+            margin_offset, margin_offset, -margin_offset, -margin_offset)
+        for direction, popup_rect in placements:
+            if available.contains(popup_rect):
+                return direction, popup_rect.topLeft()
+
+        def overflow(rect):
+            return (
+                max(available.left() - rect.left(), 0)
+                + max(rect.right() - available.right(), 0)
+                + max(available.top() - rect.top(), 0)
+                + max(rect.bottom() - available.bottom(), 0)
+            )
+
+        direction, popup_rect = min(
+            placements, key=lambda placement: overflow(placement[1]))
+        if width <= available.width():
+            popup_rect.moveLeft(min(
+                max(popup_rect.left(), available.left()),
+                available.right() - width + 1))
+        else:
+            popup_rect.moveLeft(available.left())
+        if height <= available.height():
+            popup_rect.moveTop(min(
+                max(popup_rect.top(), available.top()),
+                available.bottom() - height + 1))
+        else:
+            popup_rect.moveTop(available.top())
+        return direction, popup_rect.topLeft()
+
     def show_gallery(self, index, view):
         self.resize(app_constants.POPUP_WIDTH, app_constants.POPUP_HEIGHT)
         self.view = view
-        desktop_w = QDesktopWidget().width()
-        desktop_h = QDesktopWidget().height()
-        
-        margin_offset = 20 # should be higher than gallery_touch_offset
-        gallery_touch_offset = 10 # How far away the window is from touching gallery
 
         index_rect = view.visualRect(index)
-        self.idx_top_l = index_top_left = view.mapToGlobal(index_rect.topLeft())
-        self.idx_top_r = index_top_right = view.mapToGlobal(index_rect.topRight())
-        self.idx_btm_l = index_btm_left = view.mapToGlobal(index_rect.bottomLeft())
-        index_btm_right = view.mapToGlobal(index_rect.bottomRight())
+        index_top_left = view.viewport().mapToGlobal(index_rect.topLeft())
+        global_index_rect = QRect(index_top_left, index_rect.size())
+        self.idx_top_l = global_index_rect.topLeft()
+        self.idx_top_r = global_index_rect.topRight()
+        self.idx_btm_l = global_index_rect.bottomLeft()
+        index_btm_right = global_index_rect.bottomRight()
 
         if app_constants.DEBUG:
-            for idx in (index_top_left, index_top_right, index_btm_left, index_btm_right):
+            for idx in (
+                    self.idx_top_l, self.idx_top_r, self.idx_btm_l,
+                    index_btm_right):
                 print(idx.x(), idx.y())
 
-        # adjust placement
-
-        def check_left():
-            middle = (index_top_left.y() + index_btm_left.y()) / 2 # middle of gallery left side
-            left = (index_top_left.x() - self.width() - margin_offset) > 0 # if the width can be there
-            top = (middle - (self.height() / 2) - margin_offset) > 0 # if the top half of window can be there
-            btm = (middle + (self.height() / 2) + margin_offset) < desktop_h # same as above, just for the bottom
-            if left and top and btm:
-                self.direction = self.RIGHT
-                x = index_top_left.x() - gallery_touch_offset - self.width()
-                y = middle - (self.height() / 2)
-                appear_point = QPoint(int(x), int(y))
-                self.move(appear_point)
-                return True
-            return False
-
-        def check_right():
-            middle = (index_top_right.y() + index_btm_right.y()) / 2 # middle of gallery right side
-            right = (index_top_right.x() + self.width() + margin_offset) < desktop_w # if the width can be there
-            top = (middle - (self.height() / 2) - margin_offset) > 0 # if the top half of window can be there
-            btm = (middle + (self.height() / 2) + margin_offset) < desktop_h # same as above, just for the bottom
-
-            if right and top and btm:
-                self.direction = self.LEFT
-                x = index_top_right.x() + gallery_touch_offset
-                y = middle - (self.height() / 2)
-                appear_point = QPoint(int(x), int(y))
-                self.move(appear_point)
-                return True
-            return False
-
-        def check_top():
-            middle = (index_top_left.x() + index_top_right.x()) / 2 # middle of gallery top side
-            top = (index_top_right.y() - self.height() - margin_offset) > 0 # if the height can be there
-            left = (middle - (self.width() / 2) - margin_offset) > 0 # if the left half of window can be there
-            right = (middle + (self.width() / 2) + margin_offset) < desktop_w # same as above, just for the right
-
-            if top and left and right:
-                self.direction = self.BOTTOM
-                x = middle - (self.width() / 2)
-                y = index_top_left.y() - gallery_touch_offset - self.height()
-                appear_point = QPoint(int(x), int(y))
-                self.move(appear_point)
-                return True
-            return False
-
-        def check_bottom(override=False):
-            middle = (index_btm_left.x() + index_btm_right.x()) / 2 # middle of gallery bottom side
-            btm = (index_btm_right.y() + self.height() + margin_offset) < desktop_h # if the height can be there
-            left = (middle - (self.width() / 2) - margin_offset) > 0 # if the left half of window can be there
-            right = (middle + (self.width() / 2) + margin_offset) < desktop_w # same as above, just for the right
-
-            if (btm and left and right) or override:
-                self.direction = self.TOP
-                x = middle - (self.width() / 2)
-                y = index_btm_left.y() + gallery_touch_offset
-                appear_point = QPoint(int(x), int(y))
-                self.move(appear_point)
-                return True
-            return False
-
-        for pos in (check_bottom, check_right, check_left, check_top):
-            if pos():
-                break
-        else: # default pos is bottom
-            check_bottom(True)
+        app_window = view.window()
+        window_top_left = app_window.mapToGlobal(app_window.rect().topLeft())
+        window_bounds = QRect(window_top_left, app_window.size())
+        self.direction, appear_point = self._popup_placement(
+            window_bounds, global_index_rect, self.size())
+        self.move(appear_point)
 
         self._set_gallery(index.data(Qt.UserRole + 1))
         self.show()
