@@ -6,11 +6,6 @@ improvements over the original implementation.
 This is a cross-platform manga/doujinshi manager with namespace and tag
 support.
 
-
-Follow twiddly on Twitter to keep up to date with HPX:
-
-[![Follow on Twitter](https://img.shields.io/twitter/follow/pewspew.svg?style=social&label=Follow)](https://twitter.com/twiddly_)
-
 ## Changes over the original
 
 - Added WebP image support.
@@ -20,7 +15,7 @@ Follow twiddly on Twitter to keep up to date with HPX:
 - Modernized E-Hentai and ExHentai metadata fetching with batching, source
   fallback, and safer error handling.
 - Added compatibility with current Eze JSON metadata.
-- Improved gallery scanning and page counts by filtering non-image files.
+- Improved gallery scanning and page counts.
 - Added gallery color labels.
 - Added "Date Modified" sorting and automatic detection for modified gallery sources (This change will open a database update prompt if you're updating).
 - Improved duplicate detection system, search reduced from 10 minutes to less than 1 second.
