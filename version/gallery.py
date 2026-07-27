@@ -15,6 +15,7 @@
 import threading
 import logging
 import os
+import html
 import math
 import functools
 import random
@@ -483,6 +484,10 @@ class GalleryModel(QAbstractTableModel):
     RATING_ROLE = Qt.UserRole + 9
     RATING_COUNT = Qt.UserRole + 10
     DATE_MODIFIED_ROLE = Qt.UserRole + 11
+    DUPLICATE_GROUP_ROLE = Qt.UserRole + 12
+    DUPLICATE_MATCH_ROLE = Qt.UserRole + 13
+    DUPLICATE_ORDER_ROLE = Qt.UserRole + 14
+    DUPLICATE_VALUES_ROLE = Qt.UserRole + 15
 
     ROWCOUNT_CHANGE = pyqtSignal()
     STATUSBAR_MSG = pyqtSignal(str)
@@ -515,6 +520,36 @@ class GalleryModel(QAbstractTableModel):
         self._data_count = 0 # number of items added to model
         self._gallery_to_add = []
         self._gallery_to_remove = []
+        self._duplicate_metadata = {}
+
+    def set_duplicate_groups(self, groups):
+        """Replace this model's rows with stable, annotated duplicate groups."""
+        galleries = []
+        metadata = {}
+        order = 0
+        for group in groups:
+            for gallery in group.galleries:
+                gallery_id = gallery.id
+                member_matches = group.matches[gallery_id]
+                reasons = tuple(
+                    match_type for match_type in ('title', 'path')
+                    if match_type in member_matches)
+                metadata[gallery_id] = {
+                    'group': group.number,
+                    'reasons': reasons,
+                    'values': member_matches,
+                    'order': order,
+                }
+                galleries.append(gallery)
+                order += 1
+
+        self.beginResetModel()
+        self._data[:] = galleries
+        self._data_count = len(galleries)
+        self._gallery_to_add = []
+        self._gallery_to_remove = []
+        self._duplicate_metadata = metadata
+        self.endResetModel()
 
     def status_b_msg(self, msg):
         self.STATUSBAR_MSG.emit(msg)
@@ -529,6 +564,7 @@ class GalleryModel(QAbstractTableModel):
         current_row = index.row() 
         current_gallery = self._data[current_row]
         current_column = index.column()
+        duplicate_metadata = self._duplicate_metadata.get(current_gallery.id)
 
         def column_checker():
             if current_column == self._TITLE:
@@ -598,16 +634,56 @@ class GalleryModel(QAbstractTableModel):
             return pixmap
         
         if role == Qt.BackgroundRole:
+            if duplicate_metadata:
+                palette = QApplication.palette()
+                if duplicate_metadata['group'] % 2:
+                    return palette.color(QPalette.AlternateBase)
+                return palette.color(QPalette.Base)
             bg_color = QColor(242, 242, 242)
             bg_brush = QBrush(bg_color)
             return bg_color
 
-        if app_constants.GRID_TOOLTIP and role == Qt.ToolTipRole:
+        if role == self.DUPLICATE_GROUP_ROLE:
+            if duplicate_metadata:
+                return duplicate_metadata['group']
+            return None
+
+        if role == self.DUPLICATE_MATCH_ROLE:
+            if duplicate_metadata:
+                return duplicate_metadata['reasons']
+            return None
+
+        if role == self.DUPLICATE_ORDER_ROLE:
+            if duplicate_metadata:
+                return duplicate_metadata['order']
+            return None
+
+        if role == self.DUPLICATE_VALUES_ROLE:
+            if duplicate_metadata:
+                return duplicate_metadata['values']
+            return None
+
+        if role == Qt.ToolTipRole and (
+                app_constants.GRID_TOOLTIP or duplicate_metadata):
             add_bold = []
             add_tips = []
+            if duplicate_metadata:
+                reasons = duplicate_metadata['reasons']
+                add_bold.append('<b>Duplicate group:</b>')
+                add_tips.append(duplicate_metadata['group'])
+                if 'title' in reasons:
+                    add_bold.append('<b>Same title:</b>')
+                    add_tips.append(', '.join(
+                        html.escape(str(value)) for value in
+                        duplicate_metadata['values']['title']))
+                if 'path' in reasons:
+                    add_bold.append('<b>Same path:</b>')
+                    add_tips.append(', '.join(
+                        html.escape(str(value)) for value in
+                        duplicate_metadata['values']['path']))
             if app_constants.TOOLTIP_TITLE:
                 add_bold.append('<b>Title:</b>')
-                add_tips.append(current_gallery.title)
+                add_tips.append(html.escape(str(current_gallery.title)))
             if app_constants.TOOLTIP_AUTHOR:
                 add_bold.append('<b>Author:</b>')
                 add_tips.append(current_gallery.artist)
@@ -780,6 +856,16 @@ class GalleryModel(QAbstractTableModel):
                 return False
         self.endRemoveRows()
         return True
+
+def duplicate_match_label(reasons):
+    if reasons == ('title', 'path'):
+        return 'Same title + path'
+    if reasons == ('title',):
+        return 'Same title'
+    if reasons == ('path',):
+        return 'Same path'
+    return 'Duplicate'
+
 
 class GridDelegate(QStyledItemDelegate):
     "A custom delegate for the model/view framework"
@@ -1262,6 +1348,41 @@ class GridDelegate(QStyledItemDelegate):
                 painter.drawText(type_p.x(), type_p.y() + painter.fontMetrics().height() - 4, id_txt)
                 painter.restore()
 
+            duplicate_group = index.data(GalleryModel.DUPLICATE_GROUP_ROLE)
+            if duplicate_group is not None:
+                reasons = index.data(GalleryModel.DUPLICATE_MATCH_ROLE) or ()
+                badge_text = 'Group {} - {}'.format(
+                    duplicate_group, duplicate_match_label(reasons))
+                accent = QApplication.palette().color(QPalette.Highlight)
+                if duplicate_group % 2 == 0:
+                    accent = accent.lighter(130)
+                else:
+                    accent = accent.darker(110)
+
+                painter.save()
+                painter.setPen(QPen(accent, 3))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(
+                    QRectF(x + 1.5, y + 1.5, w - 3, h - 3), 5, 5)
+
+                painter.setFont(self.title_font)
+                badge_width = min(
+                    w - 8,
+                    painter.fontMetrics().width(badge_text) + 10)
+                badge_rect = QRect(x + 4, y + 4, badge_width,
+                                   painter.fontMetrics().height() + 4)
+                badge_color = QColor(accent)
+                badge_color.setAlpha(230)
+                painter.fillRect(badge_rect, badge_color)
+                painter.setPen(
+                    QApplication.palette().color(QPalette.HighlightedText))
+                painter.drawText(
+                    badge_rect.adjusted(5, 0, -5, 0),
+                    Qt.AlignVCenter | Qt.AlignLeft,
+                    painter.fontMetrics().elidedText(
+                        badge_text, Qt.ElideRight, badge_rect.width() - 10))
+                painter.restore()
+
             if option.state & QStyle.State_Selected:
                 painter.setPen(QPen(option.palette.highlightedText().color()))
         else:
@@ -1348,7 +1469,8 @@ class MangaView(QListView):
 
         self.current_sort = app_constants.CURRENT_SORT
         if self.view_type == app_constants.ViewType.Duplicate:
-            self.sort_model.setSortRole(GalleryModel.TIME_ROLE)
+            self.sort_model.setSortRole(GalleryModel.DUPLICATE_ORDER_ROLE)
+            self.sort_model.sort(0, Qt.AscendingOrder)
         else:
             self.sort(self.current_sort)
         if app_constants.DEBUG:
@@ -1511,6 +1633,23 @@ class MangaView(QListView):
         super().updateGeometries()
         self.verticalScrollBar().setSingleStep(app_constants.SCROLL_SPEED)
 
+class DuplicateTableDelegate(QStyledItemDelegate):
+    """Annotate duplicate rows while retaining the normal table behavior."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if index.column() != app_constants.TITLE:
+            return
+        duplicate_group = index.data(GalleryModel.DUPLICATE_GROUP_ROLE)
+        if duplicate_group is None:
+            return
+        reasons = index.data(GalleryModel.DUPLICATE_MATCH_ROLE) or ()
+        option.text = 'Group {} - {} | {}'.format(
+            duplicate_group,
+            duplicate_match_label(reasons),
+            option.text)
+
+
 class MangaTableView(QTableView):
     STATUS_BAR_MSG = pyqtSignal(str)
 
@@ -1529,9 +1668,11 @@ class MangaTableView(QTableView):
         self.setSelectionBehavior(self.SelectRows)
         self.setSelectionMode(self.ExtendedSelection)
         self.setShowGrid(True)
-        self.setSortingEnabled(True)
+        self.setSortingEnabled(
+            self.view_type != app_constants.ViewType.Duplicate)
         h_header = self.horizontalHeader()
-        h_header.setSortIndicatorShown(True)
+        h_header.setSortIndicatorShown(
+            self.view_type != app_constants.ViewType.Duplicate)
         v_header = self.verticalHeader()
         v_header.sectionResizeMode(QHeaderView.Fixed)
         v_header.setDefaultSectionSize(24)
@@ -1772,6 +1913,9 @@ class MangaViews:
         self.table_view.gallery_model = self.gallery_model
         self.table_view.sort_model = self.sort_model
         self.table_view.setModel(self.sort_model)
+        if v_type == app_constants.ViewType.Duplicate:
+            self.table_view.setItemDelegate(
+                DuplicateTableDelegate(self.table_view))
         self.table_view.setColumnWidth(app_constants.FAV, 20)
         self.table_view.setColumnWidth(app_constants.ARTIST, 200)
         self.table_view.setColumnWidth(app_constants.TITLE, 400)
@@ -1802,6 +1946,12 @@ class MangaViews:
     def set_delete_proxy(self, other_model):
         self._delete_proxy_model = other_model
         self.gallery_model.rowsAboutToBeRemoved.connect(self._delegate_delete, Qt.DirectConnection)
+
+    def set_duplicate_groups(self, groups):
+        self.gallery_model.set_duplicate_groups(groups)
+        self.sort_model.setSortRole(GalleryModel.DUPLICATE_ORDER_ROLE)
+        self.sort_model.sort(0, Qt.AscendingOrder)
+        self.sort_model.refresh()
 
     def add_gallery(self, gallery, db=False, record_time=False):
         if isinstance(gallery, (list, tuple)):

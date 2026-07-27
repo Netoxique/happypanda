@@ -51,6 +51,7 @@ import pewnet
 import utils
 import misc_db
 import database
+import duplicates
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -77,7 +78,7 @@ class AppWindow(QMainWindow):
     move_listener = pyqtSignal()
     login_check_invoker = pyqtSignal()
     db_startup_invoker = pyqtSignal(list)
-    duplicate_check_invoker = pyqtSignal(gallery.GalleryModel)
+    duplicate_check_invoker = pyqtSignal(object)
     admin_db_method_invoker = pyqtSignal(object)
     db_activity_checker = pyqtSignal()
     graphics_blur = QGraphicsBlurEffect()
@@ -1335,39 +1336,40 @@ class AppWindow(QMainWindow):
         duplicate_spinner.show()
         dup_tab = self.tab_manager.addTab("Duplicate", app_constants.ViewType.Duplicate)
         dup_tab.view.set_delete_proxy(self.default_manga_view.gallery_model)
+        self._duplicate_results_tab = dup_tab
 
         class DuplicateCheck(QObject):
-            found_duplicates = pyqtSignal(tuple)
+            groups_found = pyqtSignal(object)
             finished = pyqtSignal()
             def __init__(self):
                 super().__init__()
 
-            def checkSimple(self, model):
-                galleries = model._data
-
-                duplicates = []
-                for n, g in enumerate(galleries, 1):
-                    notifbar.add_text('Checking gallery {}'.format(n))
-                    log_d('Checking gallery {}'.format(g.title.encode(errors="ignore")))
-                    for y in galleries:
-                        title = g.title.strip().lower() == y.title.strip().lower()
-                        path = os.path.normcase(g.path) == os.path.normcase(y.path)
-                        if g.id != y.id and (title or path):
-                            if g not in duplicates:
-                                duplicates.append(y)
-                                duplicates.append(g)
-                                self.found_duplicates.emit((g, y))
+            def checkSimple(self, galleries):
+                duplicate_groups = duplicates.find_duplicate_groups(galleries)
+                self.groups_found.emit(duplicate_groups)
                 self.finished.emit()
 
         self._d_checker = DuplicateCheck()
         self._d_checker.moveToThread(app_constants.GENERAL_THREAD)
-        self._d_checker.found_duplicates.connect(lambda t: dup_tab.view.add_gallery(t, record_time=True))
+        self._d_checker.groups_found.connect(self._display_duplicate_results)
         self._d_checker.finished.connect(dup_tab.click)
         self._d_checker.finished.connect(self._d_checker.deleteLater)
         self._d_checker.finished.connect(duplicate_spinner.before_hide)
         if simple:
             self.duplicate_check_invoker.connect(self._d_checker.checkSimple)
-        self.duplicate_check_invoker.emit(self.default_manga_view.gallery_model)
+        galleries = list(self.default_manga_view.gallery_model._data)
+        self.duplicate_check_invoker.emit(galleries)
+
+    def _display_duplicate_results(self, groups):
+        duplicate_tab = self._duplicate_results_tab
+        duplicate_tab.view.set_duplicate_groups(groups)
+        gallery_count = sum(len(group.galleries) for group in groups)
+        if groups:
+            message = 'Found {} duplicate groups ({} galleries)'.format(
+                len(groups), gallery_count)
+        else:
+            message = 'No duplicate galleries found'
+        app_constants.NOTIF_BAR.add_text(message)
 
     def excepthook(self, ex_type, ex, tb):
         log_c(''.join(traceback.format_tb(tb)))

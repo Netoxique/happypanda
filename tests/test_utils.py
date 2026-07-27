@@ -10,8 +10,10 @@ import pytest
 
 from version.utils import (
     GMetafile,
+    _normalize_delete_path,
     backup_database,
     check_archive,
+    delete_path,
     make_chapters,
     normalize_gallery_category,
     recursive_gallery_check,
@@ -57,6 +59,32 @@ SAMPLE_INFO = {
         },
     },
 }
+
+
+def test_windows_delete_path_normalization_uses_native_separators():
+    mixed_path = (
+        'D:/H\\(C86) [Example] Starting Today.zip')
+
+    assert _normalize_delete_path(mixed_path, 'nt') == (
+        'D:\\H\\(C86) [Example] Starting Today.zip')
+
+
+def test_delete_path_sends_normalized_path_to_trash(monkeypatch):
+    mixed_path = 'D:/H\\Example.zip'
+    normalized_path = _normalize_delete_path(mixed_path)
+    sent_paths = []
+
+    monkeypatch.setattr(
+        'version.utils.os.path.exists',
+        lambda path: path == normalized_path)
+    monkeypatch.setattr(
+        'version.utils.app_constants.SEND_FILES_TO_TRASH', True)
+    monkeypatch.setattr(
+        'version.utils.send2trash.send2trash',
+        sent_paths.append)
+
+    assert delete_path(mixed_path) is True
+    assert sent_paths == [normalized_path]
 
 
 def assert_sample_metadata(metadata):

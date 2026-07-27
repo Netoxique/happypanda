@@ -13,6 +13,7 @@
 #"""
 
 import datetime
+import ntpath
 import os
 import subprocess
 import sys
@@ -1131,8 +1132,19 @@ def open_torrent(path):
     else:
         subprocess.Popen([app_constants.TORRENT_CLIENT, path])
 
+def _normalize_delete_path(path, platform_name=None):
+    """Return a native path suitable for filesystem and trash APIs."""
+    path = os.fspath(path)
+    if platform_name is None:
+        platform_name = os.name
+    if platform_name == 'nt':
+        return ntpath.normpath(path)
+    return os.path.normpath(path)
+
+
 def delete_path(path):
     "Deletes the provided recursively"
+    path = _normalize_delete_path(path)
     s = True
     if os.path.exists(path):
         error = ''
