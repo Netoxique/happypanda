@@ -6,11 +6,6 @@ improvements over the original implementation.
 This is a cross-platform manga/doujinshi manager with namespace and tag
 support.
 
-
-Follow twiddly on Twitter to keep up to date with HPX:
-
-[![Follow on Twitter](https://img.shields.io/twitter/follow/pewspew.svg?style=social&label=Follow)](https://twitter.com/twiddly_)
-
 ## Changes over the original
 
 - Added WebP image support.
