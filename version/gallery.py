@@ -867,6 +867,23 @@ def duplicate_match_label(reasons):
     return 'Duplicate'
 
 
+DUPLICATE_GROUP_COLORS = (
+    '#2F80ED',
+    '#F2994A',
+    '#9B51E0',
+    '#009688',
+)
+
+
+def duplicate_group_color(group_number):
+    color_index = (group_number - 1) % len(DUPLICATE_GROUP_COLORS)
+    return QColor(DUPLICATE_GROUP_COLORS[color_index])
+
+
+def duplicate_group_label(group_number):
+    return 'Group {}'.format(group_number)
+
+
 class GridDelegate(QStyledItemDelegate):
     "A custom delegate for the model/view framework"
 
@@ -1350,14 +1367,8 @@ class GridDelegate(QStyledItemDelegate):
 
             duplicate_group = index.data(GalleryModel.DUPLICATE_GROUP_ROLE)
             if duplicate_group is not None:
-                reasons = index.data(GalleryModel.DUPLICATE_MATCH_ROLE) or ()
-                badge_text = 'Group {} - {}'.format(
-                    duplicate_group, duplicate_match_label(reasons))
-                accent = QApplication.palette().color(QPalette.Highlight)
-                if duplicate_group % 2 == 0:
-                    accent = accent.lighter(130)
-                else:
-                    accent = accent.darker(110)
+                badge_text = duplicate_group_label(duplicate_group)
+                accent = duplicate_group_color(duplicate_group)
 
                 painter.save()
                 painter.setPen(QPen(accent, 3))
@@ -1374,13 +1385,13 @@ class GridDelegate(QStyledItemDelegate):
                 badge_color = QColor(accent)
                 badge_color.setAlpha(230)
                 painter.fillRect(badge_rect, badge_color)
-                painter.setPen(
-                    QApplication.palette().color(QPalette.HighlightedText))
+                painter.setPen(Qt.white)
                 painter.drawText(
                     badge_rect.adjusted(5, 0, -5, 0),
                     Qt.AlignVCenter | Qt.AlignLeft,
                     painter.fontMetrics().elidedText(
                         badge_text, Qt.ElideRight, badge_rect.width() - 10))
+
                 painter.restore()
 
             if option.state & QStyle.State_Selected:

@@ -105,5 +105,7 @@ def find_duplicate_groups(galleries):
                 for match_type, values in matches[index].items()
             }
         groups.append(DuplicateGroup(
-            group_number, member_galleries, group_matches))
+            group_number,
+            member_galleries,
+            group_matches))
     return groups

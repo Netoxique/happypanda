@@ -157,3 +157,14 @@ def test_duplicate_model_exposes_group_annotations_and_stable_order():
     assert image.pixelColor(2, 2) != QColor('white')
     duplicate_grid.close()
     application.processEvents()
+
+
+def test_group_colors_and_labels_are_deterministic():
+    colors = [
+        gallery.duplicate_group_color(group).name().upper()
+        for group in range(1, 9)
+    ]
+
+    assert colors[:4] == list(gallery.DUPLICATE_GROUP_COLORS)
+    assert colors[4:] == colors[:4]
+    assert gallery.duplicate_group_label(3) == 'Group 3'
