@@ -20,6 +20,7 @@ import gallerydb
 import utils
 import io_misc
 import pewnet
+from executors import Executors
 
 log = logging.getLogger(__name__)
 log_i = log.info
@@ -578,8 +579,7 @@ class SettingsDialog(QWidget):
         self.scroll_speed_changed.emit()
         app_constants.THUMBNAIL_CACHE_SIZE = self.cache_size
         set(self.cache_size[1], 'Advanced', 'cache size')
-        QPixmapCache.setCacheLimit(self.cache_size[0]*
-                             self.cache_size[1])
+        QPixmapCache.setCacheLimit(Executors.configure_thumbnail_cache())
 
         app_constants.FORCE_HIGH_DPI_SUPPORT = self.force_high_dpi_support.isChecked()
         set(app_constants.FORCE_HIGH_DPI_SUPPORT, 'Advanced', 'force high dpi support')

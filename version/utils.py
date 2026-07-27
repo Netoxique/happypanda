@@ -493,31 +493,58 @@ class ArchiveFile():
     zip, rar = range(2)
     def __init__(self, filepath):
         self.type = 0
+        self.filepath = filepath
         try:
             if filepath.endswith(ARCHIVE_FILES):
                 if filepath.endswith(ARCHIVE_FILES[:2]):
                     self.archive = zipfile.ZipFile(os.path.normcase(filepath))
-                    b_f = self.archive.testzip()
                     self.type = self.zip
                 elif filepath.endswith(ARCHIVE_FILES[2:]):
                     self.archive = rarfile.RarFile(os.path.normcase(filepath))
-                    b_f = self.archive.testrar()
                     self.type = self.rar
-
-                # test for corruption
-                if b_f:
-                    log_w('Bad file found in archive {}'.format(filepath.encode(errors='ignore')))
-                    raise app_constants.CreateArchiveFail
             else:
                 log_e('Archive: Unsupported file format')
                 raise app_constants.CreateArchiveFail
         except:
             log.exception('Create archive: FAIL')
             raise app_constants.CreateArchiveFail
+        # Opening an archive already reads its central directory.  Keep that
+        # directory in memory so callers do not repeatedly enumerate and scan
+        # every member.  Individual reads remain responsible for reporting a
+        # corrupt member instead of eagerly decompressing the whole archive.
+        self._names = self.archive.namelist()
+        self._name_set = set(self._names)
+        if self.type == self.zip:
+            self._directories = [
+                name for name in self._names if name.endswith('/')]
+        else:
+            self._directories = [
+                info.filename for info in self.archive.infolist()
+                if info.isdir()]
+        self._directory_cache = {'': []}
+        for name in self._names:
+            if self.type == self.zip:
+                stripped = name.rstrip('/')
+                if '/' in stripped:
+                    parent = stripped.rsplit('/', 1)[0] + '/'
+                else:
+                    parent = ''
+            else:
+                stripped = name.rstrip('/')
+                parent = stripped.rsplit('/', 1)[0] if '/' in stripped else ''
+            self._directory_cache.setdefault(parent, []).append(name)
 
     def namelist(self):
-        filelist = self.archive.namelist()
-        return filelist
+        return self._names
+
+    def _archive_call(self, method, *args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            log.exception(
+                'Failed reading archive {}'.format(
+                    self.filepath.encode(errors='ignore')))
+            raise app_constants.CreateArchiveFail from exc
 
     def is_dir(self, name):
         """
@@ -525,7 +552,7 @@ class ArchiveFile():
         """
         if not name:
             return False
-        if not name in self.namelist():
+        if name not in self._name_set:
             log_e('File {} not found in archive'.format(name))
             raise app_constants.FileNotFoundInArchive
         if self.type == self.zip:
@@ -542,42 +569,23 @@ class ArchiveFile():
         a path in the archive to the diretory will be returned.
         """
         
-        if only_top_level:
-            if self.type == self.zip:
-                return [x for x in self.namelist() if x.endswith('/') and x.count('/') == 1]
-            elif self.type == self.rar:
-                potential_dirs = [x for x in self.namelist() if x.count('/') == 0]
-                return [x.filename for x in [self.archive.getinfo(y) for y in potential_dirs] if x.isdir()]
-        else:
-            if self.type == self.zip:
-                return [x for x in self.namelist() if x.endswith('/') and x.count('/') >= 1]
-            elif self.type == self.rar:
-                return [x.filename for x in self.archive.infolist() if x.isdir()]
+        if not only_top_level:
+            return self._directories
+        if self.type == self.zip:
+            return [
+                name for name in self._directories if name.count('/') == 1]
+        return [
+            name for name in self._directories if name.count('/') == 0]
 
     def dir_contents(self, dir_name):
         """
         Returns a list of contents in the directory
         An empty string will return the contents of the top folder
         """
-        if dir_name and not dir_name in self.namelist():
+        if dir_name and dir_name not in self._name_set:
             log_e('Directory {} not found in archive'.format(dir_name))
             raise app_constants.FileNotFoundInArchive
-        if not dir_name:
-            if self.type == self.zip:
-                con = [x for x in self.namelist() if x.count('/') == 0 or \
-                    (x.count('/') == 1 and x.endswith('/'))]
-            elif self.type == self.rar:
-                con = [x for x in self.namelist() if x.count('/') == 0]
-            return con
-        if self.type == self.zip:
-            dir_con_start = [x for x in self.namelist() if x.startswith(dir_name)]
-            return [x for x in dir_con_start if x.count('/') == dir_name.count('/') and \
-                (x.count('/') == dir_name.count('/') and not x.endswith('/')) or \
-                (x.count('/') == 1 + dir_name.count('/') and x.endswith('/'))]
-        elif self.type == self.rar:
-            return [x for x in self.namelist() if x.startswith(dir_name) and \
-                x.count('/') == 1 + dir_name.count('/')]
-        return []
+        return self._directory_cache.get(dir_name, [])
 
     def extract(self, file_to_ext, path=None):
         """
@@ -594,15 +602,16 @@ class ArchiveFile():
         else:
             if self.type == self.zip:
                 membs = []
-                for name in self.namelist():
+                for name in self._names:
                     if name.startswith(file_to_ext) and name != file_to_ext:
                         membs.append(name)
-                temp_p = self.archive.extract(file_to_ext, path)
+                temp_p = self._archive_call(
+                    self.archive.extract, file_to_ext, path)
                 for m in membs:
-                    self.archive.extract(m, path)
+                    self._archive_call(self.archive.extract, m, path)
             elif self.type == self.rar:
                 temp_p = os.path.join(path, file_to_ext)
-                self.archive.extract(file_to_ext, path)
+                self._archive_call(self.archive.extract, file_to_ext, path)
             return temp_p
 
     def extract_all(self, path=None, member=None):
@@ -614,8 +623,8 @@ class ArchiveFile():
             path = os.path.join(app_constants.temp_dir, str(uuid.uuid4()))
             os.mkdir(path)
         if member:
-            self.archive.extractall(path, member)
-        self.archive.extractall(path)
+            self._archive_call(self.archive.extractall, path, member)
+        self._archive_call(self.archive.extractall, path)
         return path
 
     def open(self, file_to_open, fp=False):
@@ -623,9 +632,10 @@ class ArchiveFile():
         Returns bytes. If fp set to true, returns file-like object.
         """
         if fp:
-            return self.archive.open(file_to_open)
+            return self._archive_call(self.archive.open, file_to_open)
         else:
-            return self.archive.open(file_to_open).read()
+            return self._archive_call(
+                lambda: self.archive.open(file_to_open).read())
 
     def close(self):
         self.archive.close()
@@ -1025,6 +1035,15 @@ def tag_to_dict(string, ns_capitalize=True):
     return namespace_tags
 
 import re as regex
+@functools.lru_cache(maxsize=256)
+def _compiled_search_regex(pattern, ignore_case):
+    try:
+        flags = regex.IGNORECASE if ignore_case else 0
+        return regex.compile(pattern, flags)
+    except regex.error:
+        return None
+
+
 def title_parser(title):
     "Receives a title to parse. Returns dict with 'title', 'artist' and language"
     log_d("Parsing title: {}".format(title))
@@ -1144,15 +1163,11 @@ def delete_path(path):
 def regex_search(a, b, override_case=False, args=[]):
     "Looks for a in b"
     if a and b:
-        try:
-            if not app_constants.Search.Case in args or override_case:
-                if regex.search(a, b, regex.IGNORECASE):
-                    return True
-            else:
-                if regex.search(a, b):
-                    return True
-        except regex.error:
-            pass
+        ignore_case = (
+            app_constants.Search.Case not in args or override_case)
+        compiled = _compiled_search_regex(a, ignore_case)
+        if compiled and compiled.search(b):
+            return True
     return False
 
 def search_term(a, b, override_case=False, args=[]):

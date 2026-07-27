@@ -46,6 +46,12 @@ log_e = log.error
 log_c = log.critical
 
 
+@functools.lru_cache(maxsize=256)
+def _parse_search_date(value):
+    parsed = dateparser.parse(value, dayfirst=True)
+    return parsed.date() if parsed else None
+
+
 method_queue = queue.PriorityQueue()
 method_return = queue.Queue()
 db_constants.METHOD_QUEUE = method_queue
@@ -1573,6 +1579,9 @@ class Gallery:
         self._list_view_selected = False
         self._profile_qimage = {}
         self._profile_load_status = {}
+        self._search_cache_signature = None
+        self._search_cache = None
+        self._display_cache = {}
         self.dead_link = False
         self.state = app_constants.GalleryState.Default
         self.qtime = QTime() # used by views to record addition
@@ -1599,9 +1608,68 @@ class Gallery:
     def reset_profile(self):
         self._profile_load_status.clear()
         self._profile_qimage.clear()
+        Executors.invalidate_thumbnail(self.profile)
+
+    def prepare_search_cache(self):
+        """Return normalized searchable values, rebuilding after mutations."""
+        tag_signature = tuple(
+            (namespace, tuple(values))
+            for namespace, values in self.tags.items())
+        signature = (
+            self.title, self.artist, self.language, self.type, self.status,
+            self.link, self.info, self.rating, self.times_read,
+            self.date_added, self.pub_date, self.last_read, self.dead_link,
+            tag_signature)
+        if signature == self._search_cache_signature:
+            return self._search_cache
+
+        tag_values = tuple(
+            tag
+            for _, values in tag_signature
+            for tag in values)
+        basic = (self.title, self.artist, self.language)
+        basic_folded = tuple(
+            value.lower() if value else '' for value in basic)
+        tags_folded = tuple(
+            value.lower() for value in tag_values if value)
+        namespace_tags_folded = {
+            namespace: tuple(
+                value.lower() for value in values if value)
+            for namespace, values in tag_signature
+        }
+        self._search_cache = {
+            'basic': basic,
+            'basic_set': frozenset(value for value in basic if value),
+            'basic_text': '\0'.join(value for value in basic if value),
+            'basic_folded_set': frozenset(
+                value for value in basic_folded if value),
+            'basic_folded_text': '\0'.join(
+                value for value in basic_folded if value),
+            'tags_folded_set': frozenset(tags_folded),
+            'tags_folded_text': '\0'.join(tags_folded),
+            'namespace_tags_folded_set': {
+                namespace: frozenset(values)
+                for namespace, values in namespace_tags_folded.items()
+            },
+            'namespace_tags_folded_text': {
+                namespace: '\0'.join(values)
+                for namespace, values in namespace_tags_folded.items()
+            },
+        }
+        self._search_cache_signature = signature
+        self._display_cache.clear()
+        return self._search_cache
+
+    def cached_display_value(self, key, source, factory):
+        """Cache derived model data until its source value changes."""
+        cached = self._display_cache.get(key)
+        if cached and cached[0] == source:
+            return cached[1]
+        value = factory()
+        self._display_cache[key] = (source, value)
+        return value
 
     def _profile_loaded(self, img, ptype=None, method=None):
-        self._profile_load_status[ptype] = img
         if method and img:
             method(self, img)
 
@@ -1610,19 +1678,21 @@ class Gallery:
         if ptype == app_constants.ProfileType.Small:
             psize = app_constants.THUMB_SMALL
 
-        if ptype in self._profile_qimage:
-            f = self._profile_qimage[ptype]
+        img = Executors.cached_thumbnail(self.profile, psize)
+        if img is not None:
+            return img
+
+        f = self._profile_qimage.get(ptype)
+        if f is not None:
             if not f.done():
                 return
+            self._profile_qimage.pop(ptype, None)
             if f.result():
                 return f.result()
-        img = self._profile_load_status.get(ptype)
-        if not img:
-            self._profile_qimage[ptype] = Executors.load_thumbnail(self.profile, psize,
-                on_method=self._profile_loaded,
-                ptype=ptype, method=on_method)
-
-        return img
+        self._profile_qimage[ptype] = Executors.load_thumbnail(
+            self.profile, psize, on_method=self._profile_loaded,
+            ptype=ptype, method=on_method)
+        return None
 
     def set_profile(self, future):
         "set with profile with future object"
@@ -1707,9 +1777,7 @@ class Gallery:
             try:
                 o_tag, o = _operator_parse(tag)
                 if date:
-                    o_tag = dateparser.parse(o_tag, dayfirst=True)
-                    if o_tag:
-                        o_tag = o_tag.date()
+                    o_tag = _parse_search_date(o_tag)
                 else:
                     o_tag = int(o_tag)
                 if o != None:
@@ -1761,6 +1829,9 @@ class Gallery:
 
     def contains(self, key, args=[]):
         "Check if gallery contains keyword"
+        if not key:
+            return False
+        search_cache = self.prepare_search_cache()
         is_exclude = False if key[0] == '-' else True
         key = key[1:] if not is_exclude else key
         default = False if is_exclude else True
@@ -1768,17 +1839,29 @@ class Gallery:
             # check in title/artist/language
             found = False
             if not ':' in key:
-                for g_attr in [self.title, self.artist, self.language]:
-                    if not g_attr:
-                        continue
-                    if app_constants.Search.Regex in args:
+                if app_constants.Search.Regex in args:
+                    for g_attr in search_cache['basic']:
+                        if not g_attr:
+                            continue
                         if utils.regex_search(key, g_attr, args=args):
                             found = True
                             break
+                else:
+                    strict = app_constants.Search.Strict in args
+                    if app_constants.Search.Case in args:
+                        search_key = key
+                        if strict:
+                            found = search_key in search_cache['basic_set']
+                        else:
+                            found = search_key in search_cache['basic_text']
                     else:
-                        if utils.search_term(key, g_attr, args=args):
-                            found = True
-                            break
+                        search_key = key.lower()
+                        if strict:
+                            found = search_key in search_cache[
+                                'basic_folded_set']
+                        else:
+                            found = search_key in search_cache[
+                                'basic_folded_text']
 
             # check in tag
             if not found:
@@ -1842,15 +1925,28 @@ class Gallery:
                         if self._keyword_search(ns, tag, args=args):
                             return is_exclude
 
-                        if ns in self.tags:
-                            for t in self.tags[ns]:
-                                if utils.search_term(tag, t, True, args=args):
-                                    return is_exclude
+                        folded_tag = tag.lower()
+                        strict = app_constants.Search.Strict in args
+                        if strict:
+                            found_tag = folded_tag in search_cache[
+                                'namespace_tags_folded_set'].get(
+                                    ns, frozenset())
+                        else:
+                            found_tag = folded_tag in search_cache[
+                                'namespace_tags_folded_text'].get(ns, '')
+                        if found_tag:
+                            return is_exclude
                     else:
-                        for x in self.tags:
-                            for t in self.tags[x]:
-                                if utils.search_term(tag, t, True, args=args):
-                                    return is_exclude
+                        folded_tag = tag.lower()
+                        strict = app_constants.Search.Strict in args
+                        if strict:
+                            found_tag = folded_tag in search_cache[
+                                'tags_folded_set']
+                        else:
+                            found_tag = folded_tag in search_cache[
+                                'tags_folded_text']
+                        if found_tag:
+                            return is_exclude
             else:
                 return is_exclude
         return default

@@ -22,6 +22,7 @@ import datetime
 import enum
 import time
 import re as regex
+from collections import OrderedDict
 
 from PyQt5.QtCore import (Qt, QAbstractListModel, QModelIndex, QVariant,
                           QSize, QRect, QEvent, pyqtSignal, QThread,
@@ -29,6 +30,7 @@ from PyQt5.QtCore import (Qt, QAbstractListModel, QModelIndex, QVariant,
                           QAbstractTableModel, QItemSelectionModel,
                           QPoint, QRectF, QDate, QDateTime, QObject,
                           QEvent, QSizeF, QMimeData, QByteArray, QTime)
+from PyQt5.QtCore import QPersistentModelIndex
 from PyQt5.QtGui import (QPixmap, QBrush, QColor, QPainter, 
                          QPen, QTextDocument,
                          QMouseEvent, QHelpEvent,
@@ -104,11 +106,11 @@ log_c = log.critical
 #		node = parent.internalPointer()
 #		return len(node.subnodes)
 class GallerySearch(QObject):
-    FINISHED = pyqtSignal()
+    FINISHED = pyqtSignal(int, object)
     def __init__(self, data):
         super().__init__()
         self._data = data
-        self.result = {}
+        self.result = set()
 
         # filtering
         self.fav = False
@@ -119,45 +121,39 @@ class GallerySearch(QObject):
 
     def set_data(self, new_data):
         self._data = new_data
-        self.result = {g.id: True for g in self._data}
 
     def set_fav(self, new_fav):
         self.fav = new_fav
 
-    def search(self, term, args):
+    def search(self, request_id, term, args):
         term = ' '.join(term.split())
         search_pieces = utils.get_terms(term)
 
-        self._filter(search_pieces, args)
-        self.FINISHED.emit()
+        result = self._filter(search_pieces, args)
+        self.FINISHED.emit(request_id, result)
 
     def _filter(self, terms, args):
-        self.result.clear()
+        result = set()
+        empty_search = not terms
         for gallery in self._data:
+            if QThread.currentThread().isInterruptionRequested():
+                break
+            if empty_search:
+                gallery.prepare_search_cache()
             if self.fav:
                 if not gallery.fav:
                     continue
             if self._gallery_list:
                 if not gallery in self._gallery_list:
                     continue
-            all_terms = {t: False for t in terms}
-            allow = False
-            if utils.all_opposite(terms):
-                self.result[gallery.id] = True
-                continue
-            
-            for t in terms:
-                if gallery.contains(t, args):
-                    all_terms[t] = True
-
-            if all(all_terms.values()):
-                allow = True
-
-            self.result[gallery.id] = allow
+            if empty_search or all(gallery.contains(term, args)
+                                   for term in terms):
+                result.add(gallery.id)
+        return result
 
 class SortFilterModel(QSortFilterProxyModel):
     ROWCOUNT_CHANGE = pyqtSignal()
-    _DO_SEARCH = pyqtSignal(str, object)
+    _DO_SEARCH = pyqtSignal(int, str, object)
     _CHANGE_SEARCH_DATA = pyqtSignal(list)
     _CHANGE_FAV = pyqtSignal(bool)
     _SET_GALLERY_LIST = pyqtSignal(object)
@@ -182,6 +178,8 @@ class SortFilterModel(QSortFilterProxyModel):
         self.current_gallery_list = None
         self.current_args = []
         self.current_view = self.CAT_VIEW
+        self._search_request_id = 0
+        self._search_thread = None
         self.setDynamicSortFilter(True)
         self.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.setSortLocaleAware(True)
@@ -220,9 +218,15 @@ class SortFilterModel(QSortFilterProxyModel):
     def setup_search(self):
         if not self._search_ready:
             self.gallery_search = GallerySearch(self.sourceModel()._data)
-            self.gallery_search.FINISHED.connect(self.invalidateFilter)
-            self.gallery_search.FINISHED.connect(lambda: self.ROWCOUNT_CHANGE.emit())
-            self.gallery_search.moveToThread(app_constants.GENERAL_THREAD)
+            self.gallery_search.FINISHED.connect(self._apply_search_result)
+            self._search_thread = QThread(self)
+            self._search_thread.setObjectName('Gallery search')
+            self.gallery_search.moveToThread(self._search_thread)
+            self._search_thread.start()
+            self.destroyed.connect(self._search_thread.quit)
+            application = QApplication.instance()
+            if application:
+                application.aboutToQuit.connect(self._stop_search_thread)
             self._DO_SEARCH.connect(self.gallery_search.search)
             self._SET_GALLERY_LIST.connect(self.gallery_search.set_gallery_list)
             self._CHANGE_SEARCH_DATA.connect(self.gallery_search.set_data)
@@ -230,10 +234,25 @@ class SortFilterModel(QSortFilterProxyModel):
             self.sourceModel().rowsInserted.connect(self.refresh)
             self._search_ready = True
 
+    def _stop_search_thread(self):
+        if self._search_thread and self._search_thread.isRunning():
+            self._search_thread.requestInterruption()
+            self._search_thread.quit()
+            self._search_thread.wait(2000)
+
+    def _apply_search_result(self, request_id, result):
+        if request_id != self._search_request_id:
+            return
+        self.gallery_search.result = result
+        self.invalidateFilter()
+        self.ROWCOUNT_CHANGE.emit()
+
     def refresh(self):
         if self._startup_loading:
             return
-        self._DO_SEARCH.emit(self.current_term, self.current_args)
+        self._search_request_id += 1
+        self._DO_SEARCH.emit(
+            self._search_request_id, self.current_term, self.current_args)
 
     def begin_startup_load(self):
         self._startup_loading = True
@@ -274,20 +293,16 @@ class SortFilterModel(QSortFilterProxyModel):
             self.HISTORY_SEARCH_TERM.emit(term)
         self.current_args = args
         if not self._startup_loading:
-            self._DO_SEARCH.emit(term, args)
+            self._search_request_id += 1
+            self._DO_SEARCH.emit(self._search_request_id, term, args)
 
     def filterAcceptsRow(self, source_row, parent_index):
-        if self.sourceModel():
-            index = self.sourceModel().index(source_row, 0, parent_index)
-            if index.isValid():
-                if self._search_ready:
-                    gallery = index.data(Qt.UserRole + 1)
-                    try:
-                        return self.gallery_search.result[gallery.id]
-                    except KeyError:
-                        pass
-                else:
-                    return True
+        source_model = self.sourceModel()
+        if source_model and 0 <= source_row < len(source_model._data):
+            if self._search_ready:
+                gallery = source_model._data[source_row]
+                return gallery.id in self.gallery_search.result
+            return True
         return False
     
     def change_model(self, model):
@@ -523,8 +538,12 @@ class GalleryModel(QAbstractTableModel):
                 artist = current_gallery.artist
                 return artist
             elif current_column == self._TAGS:
-                tags = utils.tag_to_string(current_gallery.tags)
-                return tags
+                tag_source = tuple(
+                    (namespace, tuple(values))
+                    for namespace, values in current_gallery.tags.items())
+                return current_gallery.cached_display_value(
+                    'tags', tag_source,
+                    lambda: utils.tag_to_string(current_gallery.tags))
             elif current_column == self._TYPE:
                 type = current_gallery.type
                 return type
@@ -542,12 +561,17 @@ class GalleryModel(QAbstractTableModel):
             elif current_column == self._DESCR:
                 return current_gallery.info
             elif current_column == self._DATE_ADDED:
-                g_dt = "{}".format(current_gallery.date_added)
-                qdate_g_dt = QDateTime.fromString(g_dt, "yyyy-MM-dd HH:mm:ss")
-                return qdate_g_dt
+                return current_gallery.cached_display_value(
+                    'date_added', current_gallery.date_added,
+                    lambda: QDateTime.fromString(
+                        "{}".format(current_gallery.date_added),
+                        "yyyy-MM-dd HH:mm:ss"))
             elif current_column == self._PUB_DATE:
-                g_pdt = "{}".format(current_gallery.pub_date)
-                qdate_g_pdt = QDateTime.fromString(g_pdt, "yyyy-MM-dd HH:mm:ss")
+                qdate_g_pdt = current_gallery.cached_display_value(
+                    'pub_date', current_gallery.pub_date,
+                    lambda: QDateTime.fromString(
+                        "{}".format(current_gallery.pub_date),
+                        "yyyy-MM-dd HH:mm:ss"))
                 if qdate_g_pdt.isValid():
                     return qdate_g_pdt
                 else:
@@ -555,7 +579,10 @@ class GalleryModel(QAbstractTableModel):
             elif current_column == self._DATE_MODIFIED:
                 if current_gallery.date_modified is None:
                     return 'Unknown'
-                return QDateTime.fromSecsSinceEpoch(current_gallery.date_modified)
+                return current_gallery.cached_display_value(
+                    'date_modified', current_gallery.date_modified,
+                    lambda: QDateTime.fromSecsSinceEpoch(
+                        current_gallery.date_modified))
 
         # TODO: name all these roles and put them in app_constants...
 
@@ -601,7 +628,12 @@ class GalleryModel(QAbstractTableModel):
                 add_tips.append(current_gallery.info)
             if app_constants.TOOLTIP_TAGS:
                 add_bold.append('<b>Tags:</b>')
-                add_tips.append(utils.tag_to_string(current_gallery.tags))
+                tag_source = tuple(
+                    (namespace, tuple(values))
+                    for namespace, values in current_gallery.tags.items())
+                add_tips.append(current_gallery.cached_display_value(
+                    'tags', tag_source,
+                    lambda: utils.tag_to_string(current_gallery.tags)))
             if app_constants.TOOLTIP_LAST_READ:
                 add_bold.append('<b>Last read:</b>')
                 add_tips.append('{} ago'.format(utils.get_date_age(current_gallery.last_read)) if current_gallery.last_read else "Never!")
@@ -629,34 +661,45 @@ class GalleryModel(QAbstractTableModel):
             return current_gallery.fav
 
         if role == self.DATE_ADDED_ROLE:
-            date_added = "{}".format(current_gallery.date_added)
-            qdate_added = QDateTime.fromString(date_added, "yyyy-MM-dd HH:mm:ss")
-            return qdate_added
+            return current_gallery.cached_display_value(
+                'date_added', current_gallery.date_added,
+                lambda: QDateTime.fromString(
+                    "{}".format(current_gallery.date_added),
+                    "yyyy-MM-dd HH:mm:ss"))
 
         if role == self.DATE_MODIFIED_ROLE:
             if current_gallery.date_modified is not None:
-                return QDateTime.fromSecsSinceEpoch(current_gallery.date_modified)
+                return current_gallery.cached_display_value(
+                    'date_modified', current_gallery.date_modified,
+                    lambda: QDateTime.fromSecsSinceEpoch(
+                        current_gallery.date_modified))
         
         if role == self.PUB_DATE_ROLE:
             if current_gallery.pub_date:
-                pub_date = "{}".format(current_gallery.pub_date)
-                qpub_date = QDateTime.fromString(pub_date, "yyyy-MM-dd HH:mm:ss")
-                return qpub_date
+                return current_gallery.cached_display_value(
+                    'pub_date', current_gallery.pub_date,
+                    lambda: QDateTime.fromString(
+                        "{}".format(current_gallery.pub_date),
+                        "yyyy-MM-dd HH:mm:ss"))
 
         if role == self.TIMES_READ_ROLE:
             return current_gallery.times_read
 
         if role == self.LAST_READ_ROLE:
             if current_gallery.last_read:
-                last_read = "{}".format(current_gallery.last_read)
-                qlast_read = QDateTime.fromString(last_read, "yyyy-MM-dd HH:mm:ss")
-                return qlast_read
+                return current_gallery.cached_display_value(
+                    'last_read', current_gallery.last_read,
+                    lambda: QDateTime.fromString(
+                        "{}".format(current_gallery.last_read),
+                        "yyyy-MM-dd HH:mm:ss"))
 
         if role == self.TIME_ROLE:
             return current_gallery.qtime
 
         if role == self.RATING_ROLE:
-            return StarRating(current_gallery.rating)
+            return current_gallery.cached_display_value(
+                'star_rating', current_gallery.rating,
+                lambda: StarRating(current_gallery.rating))
 
         if role == self.RATING_COUNT:
             return current_gallery.rating
@@ -742,15 +785,19 @@ class GridDelegate(QStyledItemDelegate):
     "A custom delegate for the model/view framework"
 
     POPUP = pyqtSignal()
+    THUMBNAIL_READY = pyqtSignal(object)
     CONTEXT_ON = False
 
     def __init__(self, app_inst, parent):
         super().__init__(parent)
-        QPixmapCache.setCacheLimit(app_constants.THUMBNAIL_CACHE_SIZE[0] * app_constants.THUMBNAIL_CACHE_SIZE[1])
-        self._painted_indexes = {}
+        QPixmapCache.setCacheLimit(Executors.configure_thumbnail_cache())
+        self._text_layout_cache = OrderedDict()
+        self._text_layout_cache_limit = max(
+            128, app_constants.PREFETCH_ITEM_AMOUNT * 4)
         self.view = parent
         self.parent_widget = app_inst
         self._paint_level = 0
+        self.THUMBNAIL_READY.connect(self._thumbnail_ready)
 
         #misc.FileIcon.refresh_default_icon()
         self.file_icons = misc.FileIcon()
@@ -781,16 +828,74 @@ class GridDelegate(QStyledItemDelegate):
 
     def key(self, key):
         "Assigns an unique key to indexes"
-        if key in self._painted_indexes:
-            return self._painted_indexes[key]
-        else:
-            k = str(key)
-            self._painted_indexes[key] = k
-            return k
+        return str(key)
 
     def _increment_paint_level(self):
         self._paint_level += 1
         self.view.update()
+
+    def _thumbnail_ready(self, persistent_index):
+        if persistent_index.isValid():
+            rect = self.view.visualRect(QModelIndex(persistent_index))
+            self.view.viewport().update(rect)
+
+    def _text_area(self, gallery, width, default_font, title_size, artist_size,
+                   title_color, artist_color):
+        key = (
+            gallery.id, gallery.title, gallery.artist, width,
+            default_font.toString(), self.font_name, self.font_size,
+            title_size, artist_size,
+            title_color, artist_color)
+        cached = self._text_layout_cache.pop(key, None)
+        if cached is not None:
+            self._text_layout_cache[key] = cached
+            return cached
+
+        area = QTextDocument()
+        area.setDefaultFont(default_font)
+        area.setHtml("""
+        <head>
+        <style>
+        #area
+        {{
+            display:flex;
+            width:{6}px;
+            height:{7}px
+        }}
+        #title {{
+        position:absolute;
+        color: {4};
+        font-weight:bold;
+        {0}
+        }}
+        #artist {{
+        position:absolute;
+        color: {5};
+        top:20px;
+        right:0;
+        {1}
+        }}
+        </style>
+        </head>
+        <body>
+        <div id="area">
+        <center>
+        <div id="title">{2}
+        </div>
+        <div id="artist">{3}
+        </div>
+        </div>
+        </center>
+        </body>
+        """.format(
+            title_size, artist_size, gallery.title, gallery.artist,
+            title_color, artist_color, 130 + app_constants.SIZE_FACTOR,
+            1 + app_constants.SIZE_FACTOR))
+        area.setTextWidth(width)
+        self._text_layout_cache[key] = area
+        while len(self._text_layout_cache) > self._text_layout_cache_limit:
+            self._text_layout_cache.popitem(last=False)
+        return area
 
     def paint(self, painter, option, index):
         assert isinstance(painter, QPainter)
@@ -839,53 +944,13 @@ class GridDelegate(QStyledItemDelegate):
             else:
                 artist_size = "font-size:{}px;".format(self.font_size)
 
-            def make_text_area(title_text_color, artist_text_color):
-                area = QTextDocument()
-                area.setDefaultFont(option.font)
-                area.setHtml("""
-                <head>
-                <style>
-                #area
-                {{
-                    display:flex;
-                    width:{6}px;
-                    height:{7}px
-                }}
-                #title {{
-                position:absolute;
-                color: {4};
-                font-weight:bold;
-                {0}
-                }}
-                #artist {{
-                position:absolute;
-                color: {5};
-                top:20px;
-                right:0;
-                {1}
-                }}
-                </style>
-                </head>
-                <body>
-                <div id="area">
-                <center>
-                <div id="title">{2}
-                </div>
-                <div id="artist">{3}
-                </div>
-                </div>
-                </center>
-                </body>
-                """.format(title_size, artist_size, title, artist,
-                           title_text_color, artist_text_color,
-                           130 + app_constants.SIZE_FACTOR,
-                           1 + app_constants.SIZE_FACTOR))
-                area.setTextWidth(w)
-                return area
-
-            text_area = make_text_area(title_color, artist_color)
+            text_area = self._text_area(
+                gallery, w, option.font, title_size, artist_size,
+                title_color, artist_color)
             shadow_text_area = (
-                make_text_area('#000000', '#000000')
+                self._text_area(
+                    gallery, w, option.font, title_size, artist_size,
+                    '#000000', '#000000')
                 if color_label_by_type else None)
 
             #chapter_area = QTextDocument()
@@ -909,7 +974,11 @@ class GridDelegate(QStyledItemDelegate):
                 txt_layout.draw(painter, QPointF(x, y + h // 4),
                       clip=clipping)
 
-            loaded_image = gallery.get_profile(app_constants.ProfileType.Default)
+            persistent_index = QPersistentModelIndex(index)
+            loaded_image = gallery.get_profile(
+                app_constants.ProfileType.Default,
+                lambda _gallery, _image, idx=persistent_index:
+                self.THUMBNAIL_READY.emit(idx))
             if loaded_image and self._paint_level > 0 and self.view.scroll_speed < 600:
                 # if we can't find a cached image
                 pix_cache = QPixmapCache.find(self.key(loaded_image.cacheKey()))
