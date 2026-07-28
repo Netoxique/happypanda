@@ -9,6 +9,7 @@ support.
 ## Changes over the original
 
 - Added WebP image support.
+- Added Schale Network tag support
 - Added a reproducible portable Windows x64 build based on CPython 3.11 and
   cx_Freeze, with bundled UnRAR support.
 - Improved startup and gallery loading performance.
