@@ -1,4 +1,5 @@
 *Happypanda v1.2*
+- Added metadata import and web fetching support for Niyaniya/Schale Network galleries.
 - Added Date Modified sorting, table display, legacy recalculation, and monitored gallery replacement detection.
 - Improved duplicate detection from minutes to under a second and added color-coded duplicate groups.
 - Improved gallery search, filtering, thumbnail rendering, and archive opening performance.

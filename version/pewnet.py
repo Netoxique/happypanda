@@ -1591,6 +1591,122 @@ class ExHen(EHen):
     def search(self, hash_string, **kwargs):
         return super().search(hash_string, cookies=self.cookies, **kwargs)
 
+
+class NiyaniyaHen(CommenHen):
+    """Fetch metadata for public Niyaniya/Schale Network galleries."""
+    API_URL = 'https://api.schale.network/books/detail/{}/{}'
+    GALLERY_HOSTS = ('niyaniya.moe', 'shupogaki.moe', 'hoshino.one')
+    NAMESPACE_MAP = {
+        0: 'default',
+        1: 'Artist',
+        2: 'Group',
+        7: 'Uploader',
+        8: 'Male',
+        9: 'Female',
+        10: 'Mixed',
+        11: 'Language',
+    }
+    _QUEUE_LIMIT = 5
+
+    def __init__(self):
+        super().__init__()
+        self.headers = dict(self.HEADERS)
+        self.headers.update({
+            'Origin': 'https://niyaniya.moe',
+            'Referer': 'https://niyaniya.moe/',
+        })
+
+    @classmethod
+    def parse_url(cls, url):
+        parsed = requests.utils.urlparse(
+            url if '://' in url else 'https://{}'.format(url))
+        if (parsed.hostname or '').lower() not in cls.GALLERY_HOSTS:
+            return None
+        match = regex.match(
+            r'^/(?:g|reader)/(\d+)/([A-Za-z0-9]+)(?:/|$)',
+            parsed.path)
+        if not match:
+            return None
+        return int(match.group(1)), match.group(2)
+
+    def get_metadata(self, list_of_urls, cookies=None):
+        assert isinstance(list_of_urls, list)
+        data = []
+        gallery_urls = {}
+        for index, url in enumerate(list_of_urls, 1):
+            gallery_id_key = self.parse_url(url.strip())
+            if not gallery_id_key:
+                continue
+            gallery_id, gallery_key = gallery_id_key
+            try:
+                response = requests.get(
+                    self.API_URL.format(gallery_id, gallery_key),
+                    timeout=30, headers=self.headers)
+                response.raise_for_status()
+                gallery_data = response.json()
+            except requests.ConnectionError as err:
+                log_e('Could not fetch Niyaniya metadata: {}'.format(err))
+                raise app_constants.MetadataFetchFail('connection error')
+            except (requests.RequestException, ValueError) as err:
+                log_e('Could not fetch Niyaniya metadata: {}'.format(err))
+                continue
+
+            if not isinstance(gallery_data, dict):
+                continue
+            gallery_data = dict(gallery_data)
+            gallery_data['_queue_id'] = index
+            data.append(gallery_data)
+            gallery_urls[index] = url
+        if not data:
+            return None
+        return data, gallery_urls
+
+    @classmethod
+    def parse_metadata(cls, data, gallery_urls):
+        parsed_metadata = {}
+        for gallery_data in data:
+            queue_id = gallery_data.get('_queue_id')
+            url = gallery_urls.get(queue_id)
+            title = gallery_data.get('title')
+            if not url or not title:
+                continue
+
+            tags = {}
+            for tag in gallery_data.get('tags') or ():
+                if not isinstance(tag, dict) or not tag.get('name'):
+                    continue
+                namespace_id = tag.get('namespace', 0)
+                namespace = cls.NAMESPACE_MAP.get(
+                    namespace_id, 'Namespace {}'.format(namespace_id))
+                tags.setdefault(namespace, []).append(
+                    str(tag['name']).lower().replace('_', ' '))
+
+            metadata = {
+                'title': {'def': str(title)},
+                'type': 'Other',
+                'pub_date': '',
+                'tags': tags,
+                'url': url,
+            }
+            created_at = gallery_data.get('created_at')
+            try:
+                metadata['pub_date'] = datetime.fromtimestamp(
+                    int(created_at) / 1000).replace(microsecond=0)
+            except (TypeError, ValueError, OSError, OverflowError):
+                pass
+            parsed_metadata[url] = metadata
+        return parsed_metadata
+
+    @classmethod
+    def apply_metadata(cls, gallery, data, append=True):
+        return EHen.apply_metadata(gallery, data, append)
+
+    def search(self, search_string, **kwargs):
+        # Schale Network exposes direct gallery metadata but no public
+        # reverse-image/hash lookup.
+        return {}
+
+
 class ChaikaHen(CommenHen):
     "Fetches gallery metadata from panda.chaika.moe"
     g_url = "http://panda.chaika.moe/gallery/"

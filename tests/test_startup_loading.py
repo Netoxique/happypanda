@@ -1,4 +1,5 @@
 """Regression tests for bulk database startup hydration."""
+import datetime
 import os
 import sqlite3
 import sys
@@ -113,6 +114,29 @@ def test_bulk_hydration_preserves_all_relationships():
         if statement.lstrip().upper().startswith('SELECT')
     ]
     assert len(selects) <= 6
+
+
+def test_bulk_hydration_accepts_fractional_metadata_dates():
+    conn, gallery_id = create_library()
+    conn.execute(
+        'UPDATE series SET pub_date=? WHERE series_id=?',
+        ('2023-05-05 16:55:25.250000', gallery_id))
+    conn.commit()
+    old_connection = DBBase._DB_CONN
+    old_lists = app_constants.GALLERY_LISTS
+    app_constants.GALLERY_LISTS = set()
+    DBBase._DB_CONN = conn
+
+    try:
+        galleries, _tags, _hashes, _namespace_tags = (
+            gallerydb.DatabaseStartup._hydrate_snapshot())
+    finally:
+        conn.close()
+        DBBase._DB_CONN = old_connection
+        app_constants.GALLERY_LISTS = old_lists
+
+    assert galleries[0].pub_date == datetime.datetime(
+        2023, 5, 5, 16, 55, 25, 250000)
 
 
 def test_startup_signal_order(monkeypatch):

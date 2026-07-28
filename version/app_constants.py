@@ -268,7 +268,8 @@ POPUP_HEIGHT = get(300, 'Visual', 'popup.h', int)
 # Gallery
 APPEND_TAGS_GALLERIES = get(True, 'Application', 'append tags to gallery', bool)
 KEEP_ADDED_GALLERIES = get(True, 'Application', 'keep added galleries', bool)
-GALLERY_METAFILE_KEYWORDS = ('info.json', 'info.txt')
+GALLERY_METAFILE_KEYWORDS = (
+    'info.json', 'info.txt', 'info.yaml', 'info.yml')
 CURRENT_SORT = get('title', 'General', 'current sort')
 HIGH_QUALITY_THUMBS = get(False, 'Visual', 'high quality thumbs', bool)
 DISPLAY_RATING = get(True, 'Visual', 'display gallery rating', bool)

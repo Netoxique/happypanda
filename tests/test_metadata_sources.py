@@ -78,6 +78,102 @@ def test_website_checker_accepts_current_ehentai_gallery_urls():
     assert checker(None, 'https://exhentai.org/g/123/token') == 'exhen'
 
 
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://niyaniya.moe/g/2290/21283cfa38ac',
+        'https://shupogaki.moe/reader/2290/21283cfa38ac/1',
+        'https://hoshino.one/g/2290/21283cfa38ac',
+    ])
+def test_website_checker_accepts_niyaniya_gallery_urls(url):
+    assert fetch.Fetch._website_checker(None, url) == 'niyaniya'
+
+
+def test_niyaniya_metadata_api_and_parser(monkeypatch):
+    gallery_url = 'https://niyaniya.moe/g/2290/21283cfa38ac'
+    payload = {
+        'id': 2290,
+        'key': '21283cfa38ac',
+        'created_at': 1683327312801,
+        'title': (
+            "[Endou Hiroto] School Melt - Sonoko's Determination! "
+            '(Comic Bavel 2017-10)'),
+        'tags': [
+            {'name': 'armpit fetish'},
+            {'namespace': 1, 'name': 'endou hiroto'},
+            {'namespace': 4, 'name': 'comic bavel 2017-10'},
+            {'namespace': 9, 'name': 'schoolgirl uniform'},
+            {'namespace': 11, 'name': 'english'},
+            {'namespace': 11, 'name': 'translated'},
+            {'namespace': 12, 'name': 'uncensored'},
+        ],
+    }
+    requests = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    def fake_get(url, **kwargs):
+        requests.append((url, kwargs))
+        return Response()
+
+    monkeypatch.setattr(pewnet.requests, 'get', fake_get)
+    source = pewnet.NiyaniyaHen()
+
+    metadata = source.add_to_queue(gallery_url, proc=True)
+
+    assert requests[0][0] == (
+        'https://api.schale.network/books/detail/2290/21283cfa38ac')
+    assert requests[0][1]['headers']['Origin'] == 'https://niyaniya.moe'
+    assert requests[0][1]['headers']['Referer'] == 'https://niyaniya.moe/'
+    parsed = metadata[gallery_url]
+    assert parsed['title']['def'] == payload['title']
+    assert parsed['tags']['Artist'] == ['endou hiroto']
+    assert parsed['tags']['Language'] == ['english', 'translated']
+    assert parsed['tags']['Namespace 4'] == ['comic bavel 2017-10']
+    assert parsed['tags']['Namespace 12'] == ['uncensored']
+    assert parsed['url'] == gallery_url
+    assert parsed['pub_date'] == pewnet.datetime.fromtimestamp(
+        payload['created_at'] / 1000).replace(microsecond=0)
+
+    gallery = SimpleNamespace(
+        title='', artist='', language='', type='Other', pub_date=None,
+        tags={}, link='', temp_url=gallery_url)
+    source.apply_metadata(gallery, parsed)
+
+    assert gallery.title == (
+        "School Melt - Sonoko's Determination! (Comic Bavel 2017-10)")
+    assert gallery.artist == 'Endou hiroto'
+    assert gallery.language == 'English'
+    assert gallery.link == gallery_url
+
+
+def test_existing_archive_recovers_niyaniya_link_before_fetch(
+        tmp_path, monkeypatch):
+    archive_path = tmp_path / 'gallery.cbz'
+    with zipfile.ZipFile(str(archive_path), 'w') as archive:
+        archive.writestr(
+            'info.yaml',
+            'source: SchaleNetwork:/g/2290/21283cfa38ac\n')
+        archive.writestr('001.jpg', b'image')
+    extraction_path = tmp_path / 'extract'
+    extraction_path.mkdir()
+    monkeypatch.setattr(
+        fetch.app_constants, 'temp_dir', str(extraction_path))
+    gallery = SimpleNamespace(
+        link='', path=str(archive_path), path_in_archive='',
+        is_archive=1)
+
+    recovered = fetch.Fetch._recover_gallery_link(gallery)
+
+    assert recovered == 'https://niyaniya.moe/g/2290/21283cfa38ac'
+    assert gallery.link == recovered
+
+
 @pytest.mark.parametrize('source_type', ['ehen', 'exhen'])
 @pytest.mark.parametrize('url_type', ['ehen', 'exhen'])
 def test_both_eh_sources_accept_both_gallery_url_types(

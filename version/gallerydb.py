@@ -166,9 +166,17 @@ def gallery_map(row, gallery, chapters=True, tags=True, hashes=True):
     gallery.fav = row['fav']
 
     def convert_date(date_str):
-        #2015-10-25 21:44:38
-        if date_str and date_str != 'None':
-            return datetime.datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+        if not date_str or date_str == 'None':
+            return None
+        if isinstance(date_str, datetime.datetime):
+            return date_str
+        try:
+            # Accept both the historical second-precision representation and
+            # ISO timestamps containing fractional seconds.
+            return datetime.datetime.fromisoformat(str(date_str))
+        except (TypeError, ValueError):
+            log_w('Ignoring invalid gallery date: {!r}'.format(date_str))
+            return None
 
     gallery.pub_date = convert_date(row['pub_date'])
     gallery.last_read = convert_date(row['last_read'])

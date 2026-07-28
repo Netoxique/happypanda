@@ -171,6 +171,28 @@ def test_minimal_eze_info_json_is_applied_from_archive(
     assert_sample_metadata(gallery)
 
 
+def test_schale_network_yaml_redirect_is_applied_from_archive(
+        tmp_path, monkeypatch):
+    archive_path = tmp_path / 'gallery.cbz'
+    with zipfile.ZipFile(archive_path, 'w') as archive:
+        archive.writestr(
+            'info.yaml',
+            'source: SchaleNetwork:/g/2290/21283cfa38ac\n')
+        archive.writestr('001.jpg', b'image')
+    extraction_path = tmp_path / 'extract'
+    extraction_path.mkdir()
+    monkeypatch.setattr(
+        'version.utils.app_constants.temp_dir', str(extraction_path))
+    gallery = SimpleNamespace(
+        title='', artist='', type='', tags={}, language='',
+        pub_date=None, link='', info='')
+
+    GMetafile('', str(archive_path)).apply_gallery(gallery)
+
+    assert gallery.link == (
+        'https://niyaniya.moe/g/2290/21283cfa38ac')
+
+
 @pytest.mark.parametrize(
     ('source_category', 'expected'),
     [('image set', 'Image Set'), ('artist cg', 'Artist CG'),

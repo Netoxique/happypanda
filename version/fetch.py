@@ -502,6 +502,9 @@ class Fetch(QObject):
         elif hostname == 'panda.chaika.moe' and \
                 (path.startswith('/archive/') or path.startswith('/gallery/')):
             return 'chaikahen'
+        elif hostname in pewnet.NiyaniyaHen.GALLERY_HOSTS and \
+                (path.startswith('/g/') or path.startswith('/reader/')):
+            return 'niyaniya'
         else:
             log_e('Invalid URL')
             return None
@@ -542,6 +545,31 @@ class Fetch(QObject):
             "Using {} metadata source".format(source_name))
         self._auto_metadata_process(galleries, hen, valid_url)
 
+    @staticmethod
+    def _recover_gallery_link(gallery):
+        """Recover a missing web URL from an existing gallery metafile."""
+        if getattr(gallery, 'link', None):
+            return gallery.link
+
+        try:
+            if getattr(gallery, 'is_archive', False):
+                archive_path = getattr(gallery, 'path', '')
+                internal_path = (
+                    getattr(gallery, 'path_in_archive', '') or '')
+                metafile = utils.GMetafile(internal_path, archive_path)
+            else:
+                metafile = utils.GMetafile(getattr(gallery, 'path', ''))
+        except (OSError, ValueError, app_constants.CreateArchiveFail):
+            log.exception('Could not rescan gallery metafile')
+            return ''
+
+        recovered_link = metafile.metadata.get('link', '')
+        if recovered_link:
+            gallery.link = recovered_link
+            log_i('Recovered gallery URL from metafile: {}'.format(
+                recovered_link))
+        return recovered_link
+
     def auto_web_metadata(self):
         """
         Auto fetches metadata for the provided list of galleries.
@@ -563,19 +591,55 @@ class Fetch(QObject):
                 app_constants.GLOBAL_EHEN_LOCK = False
                 self.FINISHED.emit(False)
 
+            pending_galleries = list(self.galleries)
+            niyaniya_galleries = []
+            for gallery in pending_galleries:
+                self._recover_gallery_link(gallery)
+                candidate_url = getattr(gallery, '_g_dialog_url', None)
+                if not candidate_url:
+                    candidate_url = getattr(gallery, 'temp_url', None)
+                if not candidate_url and gallery.link and \
+                        app_constants.USE_GALLERY_LINK:
+                    candidate_url = gallery.link
+                if self._website_checker(candidate_url) == 'niyaniya':
+                    niyaniya_galleries.append(gallery)
+
+            if niyaniya_galleries:
+                log_i('Using Niyaniya metadata source')
+                self.AUTO_METADATA_PROGRESS.emit(
+                    'Using Niyaniya metadata source')
+                try:
+                    self._auto_metadata_process(
+                        niyaniya_galleries, pewnet.NiyaniyaHen(),
+                        'niyaniya')
+                except app_constants.MetadataFetchFail as err:
+                    fetch_cancelled(err)
+                    return
+                failed_niyaniya = [
+                    gallery for gallery, _error in self.error_galleries]
+                self.error_galleries.clear()
+                pending_galleries = [
+                    gallery for gallery in pending_galleries
+                    if gallery not in niyaniya_galleries]
+                pending_galleries.extend(failed_niyaniya)
+
             exprops = settings.ExProperties()
             ehen_sources = self._ehen_sources(
                 self._default_ehen_url, exprops.cookies)
-            hen, valid_url = ehen_sources[0]
-            source_name = 'ExHentai' if valid_url == 'exhen' else 'E-Hentai'
-            log_i("Using {} metadata source".format(source_name))
-            try:
-                self._auto_metadata_process(self.galleries, hen, valid_url, color=True)
-            except app_constants.MetadataFetchFail as err:
-                fetch_cancelled(err)
-                return
+            if pending_galleries:
+                hen, valid_url = ehen_sources[0]
+                source_name = (
+                    'ExHentai' if valid_url == 'exhen' else 'E-Hentai')
+                log_i("Using {} metadata source".format(source_name))
+                try:
+                    self._auto_metadata_process(
+                        pending_galleries, hen, valid_url, color=True)
+                except app_constants.MetadataFetchFail as err:
+                    fetch_cancelled(err)
+                    return
 
-            for hen, valid_url in ehen_sources[1:]:
+            for hen, valid_url in (
+                    ehen_sources[1:] if pending_galleries else ()):
                 if not self.error_galleries:
                     break
                 try:

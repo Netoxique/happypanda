@@ -245,6 +245,26 @@ class GMetafile:
                             self.metadata['link'] = other
                 return True
 
+    def _schale_network(self, fp):
+        """Read the source redirect written by Schale Network CBZ files."""
+        if not fp.name.lower().endswith(('.yaml', '.yml')):
+            return
+
+        for line in fp:
+            match = re.match(r'^\s*source\s*:\s*(.*?)\s*$', line, re.I)
+            if not match:
+                continue
+            source = match.group(1).strip().strip('"\'')
+            redirect = re.match(
+                r'^SchaleNetwork:(/g/\d+/[A-Za-z0-9]+)/*$',
+                source, re.I)
+            if redirect:
+                log_i('Detected metafile: Schale Network')
+                self.metadata['link'] = (
+                    'https://niyaniya.moe' + redirect.group(1))
+                return True
+        return False
+
         ## Doesnt work for some reason.. too lazy to debug
         #elif fp.name.endswith('info.json'):
         #    log_i('Detected metafile: HDoujin json')
@@ -275,7 +295,9 @@ class GMetafile:
         for fp in self.files:
             with fp:
                 z = False
-                for x in [self._eze, self._hdoujindler]:
+                for x in [
+                        self._eze, self._hdoujindler,
+                        self._schale_network]:
                     try:
                         if x(fp):
                             z = True
